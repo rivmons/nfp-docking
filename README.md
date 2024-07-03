@@ -1,6 +1,6 @@
 # Neural Fingerprint-based Molecular Docking
 
-A repository enabling a deep-learning approach to molecular docking. Utilizes differentiable, trainable, neural fingerprints to filter dynamic-sized databases of molecules based on binding favorability to proteins/binding sites.
+A repository enabling a deep-learning approach to molecular docking. Utilizes differentiable, trainable, neural fingerprints to filter dynamic-sized databases of molecules based on binding favorability to proteins/binding sites. Uses activations to isolate most significant portions of graph.
 
 ### steps to run:
 
