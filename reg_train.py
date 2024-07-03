@@ -13,7 +13,7 @@ from sklearn.metrics import auc, precision_recall_curve, roc_curve, confusion_ma
 import matplotlib.pyplot as plt
 import sys
 from networkP import dockingProtocol
-from util import buildFeats
+from util import buildFeats, dockingDataset, labelsToDF
 import time
 
 parser = argparse.ArgumentParser()
@@ -22,7 +22,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-dropout','--df',required=True)
 parser.add_argument('-learn_rate','--lr',required=True)
 parser.add_argument('-os','--os',required=True)
-parser.add_argument('-protein', '--pro', required=True)
+parser.add_argument('-data', '--dat', required=True)
 parser.add_argument('-bs', '--batch_size', required=True)
 parser.add_argument('-fplen', '--fplength', required=True)
 parser.add_argument('-mnum', '--model_number', required=True)
@@ -34,7 +34,7 @@ lr=float(cmdlArgs.lr)
 oss=int(cmdlArgs.os)
 wd=float(cmdlArgs.weight_decay)
 bs=int(cmdlArgs.batch_size)
-protein = cmdlArgs.pro
+data = cmdlArgs.dat
 fplCmd = int(cmdlArgs.fplength)
 mn = cmdlArgs.model_number
 
@@ -78,152 +78,33 @@ class EarlyStopper:
             return True
         return False
 
-class dockingDataset(Dataset):
-    def __init__(self, train, labels, maxa=70, maxd=6, name='unknown'):
-        # self.train = (zid, smile), self.label = (bin label)
-        self.train = train
-        self.labels = torch.from_numpy(np.array(labels)).float()
-        self.maxA = maxa
-        self.maxD = maxd
-        self.a, self.b, self.e = buildFeats([x[1] for x in self.train], self.maxD, self.maxA, name)
-
-    def __len__(self):
-        return self.a.shape[0]
-
-    def __getitem__(self, idx):
-        return self.a[idx], self.b[idx], self.e[idx], (self.labels[idx], self.train[idx][0])
-
-
-def labelsToDF(fname):
-    arr = []
-    with open(fname) as f:
-        for line in f.readlines():
-            try:
-                l = None
-                try:
-                    l = [float(line.split('\t')[0].split(' ')[2])]
-                except:
-                    l = [float(line.split('\t')[1])]
-                if l[0] >= 10: continue
-                zid = line.split('\t')[2].rstrip() if "ZINC" not in line.split('\t')[1].rstrip() else line.split('\t')[1].rstrip()
-                l.append(zid)
-                arr.append(l)
-            except:
-                continue
-    df = pd.DataFrame(arr)
-    df.columns = ['labels', 'zinc_id']
-    return df
 
 # 70-15-15 split
-allData = labelsToDF(f'../../data/dock_{protein}.txt')
-allData.set_index('zinc_id', inplace=True)
-trainData, validationData, testData = np.split(allData.sample(frac=1), 
-                                        [int(.70*len(allData)), int(.85*len(allData))])
-
-print(f'merged df shapes: {trainData.shape}, {validationData.shape}, {testData.shape}')
-
-trainData = pd.DataFrame(trainData)
-validationData = pd.DataFrame(validationData)
-testData = pd.DataFrame(testData)
 smileData = pd.read_csv('../../data/smilesDS.smi', delimiter=' ')
-smileData.columns = ['smile', 'zinc_id']
+smileData.columns = ['smiles', 'zinc_id']
 smileData.set_index('zinc_id', inplace=True)
 
-gfeDist = allData['labels'].to_numpy()
-# print(gfeDist)
-# plt.hist(gfeDist, bins=100)
-gfeDist = np.sort(gfeDist)
-cf = gfeDist[int(0.20 * gfeDist.shape[0])] # gfeDist[int(0.20 * gfeDist.shape[0])]
-print(f'cf = {cf}')
+data_path = f'../../data/{data}.txt'
+allData = labelsToDF(data_path)
+if 'smiles' not in allData.columns:
+    allData = pd.merge(allData, smileData, on='zinc_id')
+print('merged', allData)
 
-yTrain = trainData.loc[:,'labels']<cf
+trainData, valData, testData = np.split(allData.sample(frac=1), 
+                                        [int(.70*len(allData)), int(.85*len(allData))])
 
-allPD = []
-allLabels = []
-yHit = yTrain[yTrain.values==1]
-yNHit = yTrain[yTrain.values==0]
-hitC = yHit.shape[0]
-nhitC = yNHit.shape[0]
-print(f'hits in dataset: {hitC}, non-hits in dataset: {nhitC}')
+print(f'merged df shapes: {trainData.shape}, {valData.shape}, {testData.shape}')
 
-oversampleSize = np.min([nhitC, 50000, hitC*oss*8])
-print(f'sample size for oversampled dataset: {oversampleSize}')
 
-trainTuples = []
-for i in range(oversampleSize):
-    iPos = random.randint(0, hitC-1)
-    iNeg = random.randint(0, nhitC-1)
-    # 50-50 balanced
-    trainTuples.append((yHit.index[iPos], 1))
-    trainTuples.append((yNHit.index[iNeg], 0))
+ID_column = allData.columns[allData.columns.str.contains('zinc_id|Compound ID', case=False, regex=True)].tolist()[0]
 
-random.shuffle(trainTuples)
-xValidL = validationData.index.tolist()
-yValid = (validationData.loc[:, 'labels']<cf).astype(int).to_numpy().tolist()
-xTestL = testData.index.tolist()
-yTest = (testData.loc[:, 'labels']<cf).astype(int).to_numpy().tolist()
-yHit = []
-yNHit = []
+xTrain = trainData[[ID_column, 'smiles']].values.tolist()
+yTrain = trainData['labels'].tolist()
+xTest = testData[[ID_column, 'smiles']].values.tolist()
+yTest = testData['labels'].tolist()
+xValid = valData[[ID_column, 'smiles']].values.tolist()
+yValid = valData['labels'].tolist()
 
-trainL = pd.DataFrame(trainTuples)
-trainL.columns = ['zinc_id', 'labels']
-trainL.set_index('zinc_id', inplace=True)
-trainL = pd.merge(trainL, smileData, on='zinc_id')
-validL = (validationData.loc[:, 'labels']<cf).astype(int).reset_index()
-testL = (testData.loc[:, 'labels']<cf).astype(int).reset_index()
-validL.columns = ['zinc_id', 'labels']
-testL.columns = ['zinc_id', 'labels']
-validL.set_index('zinc_id', inplace=True)
-testL.set_index('zinc_id', inplace=True)
-validL = pd.merge(validL, smileData, on='zinc_id')
-testL = pd.merge(testL, smileData, on='zinc_id')
-
-xTrain = trainL.reset_index()[['zinc_id', 'smile']].values.tolist()
-yTrain = [l[0] for l in trainL.reset_index()[['labels']].values.tolist()]
-xValid = validL.reset_index()[['zinc_id', 'smile']].values.tolist()
-yValid = [l[0] for l in validL.reset_index()[['labels']].values.tolist()]
-xTest = testL.reset_index()[['zinc_id', 'smile']].values.tolist()
-yTest = [l[0] for l in testL.reset_index()[['labels']].values.tolist()]
-
-print("xTRAIN:", xTrain)
-print("yTrain:", yTrain)
-
-hiddenfeats = [32] * 1  # no. of layers in ANN
-layers = [num_atom_features()] + hiddenfeats 
-fpl = fplCmd 
-modelParams = {
-    "fpl": fpl,
-    "conv": {
-        "layers": layers
-    },
-    "ann": {
-        "layers": layers,
-        "ba": [fpl, fpl // 4, 1],
-        "dropout": df
-    }
-}
-print(f'layers: {layers}, through-shape: {list(zip(layers[:-1], layers[1:]))}')
-
-# # load pickled data
-# inputData = None
-# with open("../../data/dataPkl.dat", "rb") as inp:
-#     inputData = dill.load(inp)
-
-# ma, mb = 0, 0
-# batchSize = bs 
-# for i in xTrain:
-#     s = inputData[i]
-#     if ma < s[0].shape[0]: ma = s[0].shape[0]
-#     if mb < s[1].shape[0]: mb = s[1].shape[0]
-# print(ma, mb)
-# data processing -> oversampling, labeling
-# define cf value
-# use pandas to load both smiles and labels
-    # only need smiles and labels; conversion to convFeatures happens in getter of dataloader
-# randomly sample data into test-train-split
-# oversample (reference train.py + internet)
-    # 50/50 split?
-# pass in oversampled smiles with associated binary labels
 trainds = dockingDataset(train=xTrain, 
                         labels=yTrain,
                         name='train')
@@ -237,8 +118,28 @@ validds = dockingDataset(train=xValid,
                          name='valid')
 validdl = DataLoader(validds, batch_size=bs, shuffle=True)
 
+
+
+fpl = fplCmd 
+hiddenfeats = [fpl] * 4  # conv layers, of same size as fingeprint (so can map activations to features)
+layers = [num_atom_features()] + hiddenfeats
+modelParams = {
+    "fpl": fpl,
+    "conv": {
+        "layers": layers
+    },
+    "ann": {
+        "layers": layers,
+        "ba": [fpl, 1],
+        "dropout": df
+    }
+}
+print(f'layers: {layers}, through-shape: {list(zip(layers[:-1], layers[1:]))}')
+
+
+
 model = dockingProtocol(modelParams).to(device=device)
-print(f"Model: {model}")
+print(model)
 # print("inital grad check")
 # for name, param in model.named_parameters():
 #     if param.requires_grad:
@@ -246,14 +147,14 @@ print(f"Model: {model}")
 totalParams = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print(f'total trainable params: {totalParams}')
 print(sum(yTrain), len(yTrain))
-lossFn = nn.BCELoss()
+lossFn = nn.MSELoss()
 # adam, lr=0.01, weight_decay=0.001, prop=0.2, dropout=0.2
 optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
 model.load_state_dict(torch.load('../basisModel.pth'), strict=False)
 lendl = len(trainds)
 bestVLoss = 100000000
 lastEpoch = False
-epochs = 200  # 200 initially 
+epochs = 30  # 200 initially 
 earlyStop = EarlyStopper(patience=10, min_delta=0.01)
 trainLoss, validLoss = [], []
 for epoch in range(1, epochs + 1):
@@ -302,14 +203,15 @@ for epoch in range(1, epochs + 1):
     validLoss.append(valid_loss)
     print(f'\nValidation Results:\nacc: {(100*correct):>0.1f}%, loss: {valid_loss:>8f}\n------------------------------------------------')
     
-    # if valid_loss < bestVLoss:
-    #     bestVLoss = valid_loss
-    #     model_path = f'model_{epoch}'
-    #     torch.save(model.state_dict(), model_path)
+    if valid_loss < bestVLoss:
+        bestVLoss = valid_loss
+        model_path = f'{data}_model.pt'  #f'{data}_model_{epoch}.pt'
+        model.save(params=modelParams, outpath=model_path, dataset=data)
 
     if earlyStop.early_stop(valid_loss):
         print(f'validation loss converged to ~{valid_loss}')
         break
+
 
 if cStop: 
     print(f'training loss converged erroneously')

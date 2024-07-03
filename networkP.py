@@ -5,7 +5,7 @@ from features import \
     num_bond_features
 import numpy as np
 from util import buildFeats
-from torch.utils.data import Dataset
+from util import dockingDataset
 import torch.nn.functional as F
 import os
 
@@ -21,21 +21,6 @@ device = (
 
 print(f"Using {device} device")
 print(f'num interop threads: {torch.get_num_interop_threads()}, num intraop threads: {torch.get_num_threads()}') 
-
-class dockingDataset(Dataset):
-    def __init__(self, train, labels, maxa=70, maxd=6):
-        # self.train = (zid, smile), self.label = (bin label)
-        self.train = train
-        self.labels = torch.from_numpy(np.array(labels)).float()
-        self.maxA = maxa
-        self.maxD = maxd
-        self.a, self.b, self.e = buildFeats([x[1] for x in self.train], self.maxD, self.maxA)
-
-    def __len__(self):
-        return len(self.labels)
-
-    def __getitem__(self, idx):
-        return self.a[idx], self.b[idx], self.e[idx], (self.labels[idx], self.train[idx][0])
 
 class GraphLookup(nn.Module):
     def __init__(self):
@@ -94,7 +79,7 @@ class nfpConv(nn.Module):
     #         dw = nn.init.xavier_normal_(dw)
     #         self.degArr.append(dw)
 
-    def forward(self, input):
+    def forward(self, input, return_conv_activs=False):
         atoms, bonds, edges = input
         atoms, bonds, edges = atoms.to(device), bonds.to(device), edges.to(device)
         atom_degrees = (edges != -1).sum(-1, keepdim=True)
@@ -104,13 +89,18 @@ class nfpConv(nn.Module):
         summed_features = torch.cat([summed_atom_features, summed_bond_features], dim=-1)
 
         new_features = None
-        for degree in range(6):
+        stored_activations = []
+        for degree in range(6): # no atom has >5 bonds
             atom_masks_this_degree = (atom_degrees == degree).float()
             new_unmasked_features = F.relu(torch.matmul(summed_features, self.degArr[degree]) + self.b)
             new_masked_features = new_unmasked_features * atom_masks_this_degree
+            if return_conv_activs:
+                stored_activations.append((degree, new_masked_features))
             new_features = new_masked_features if degree == 0 else new_features + new_masked_features
 
-        return new_features
+        if stored_activations:
+            return stored_activations, new_features
+        else: return new_features
 
 
 class nfpOutput(nn.Module):
@@ -135,7 +125,7 @@ class nfpOutput(nn.Module):
         general_atom_mask = (atom_degrees != 0).float()
         summed_bond_features = b.sum(-2)
         summed_features = torch.cat([a, summed_bond_features], dim=-1)
-        fingerprint_out_unmasked = F.sigmoid(torch.matmul(summed_features, self.w) + self.b)
+        fingerprint_out_unmasked = torch.sigmoid(torch.matmul(summed_features, self.w) + self.b)
         fingerprint_out_masked = fingerprint_out_unmasked * general_atom_mask
 
         return fingerprint_out_masked.sum(dim=-2)
@@ -156,7 +146,7 @@ class GraphPool(nn.Module):
 
 
 class nfpDocking(nn.Module):
-    def __init__(self, layers, fpl=32, hf=20):
+    def __init__(self, layers, fpl=32, hf=32):
         super(nfpDocking, self).__init__()
         self.layers = layers
         self.fpl = fpl
@@ -176,15 +166,31 @@ class nfpDocking(nn.Module):
         return nn.ModuleList(layersArr), nn.ModuleList(outputArr)
             
     
-    def forward(self, input):
+    def forward(self, input, return_conv_activs=False):
         a, b, e = input
         a, b, e = a.to(device), b.to(device), e.to(device)
-        for i in range(len(self.layers[1:])):
-            a = self.layersArr[i]((a, b, e))
+        lay_count = len(self.layers[1:])
+        for i in range(lay_count):
+            if return_conv_activs and i == lay_count-1: # if last store activations
+                activations, a = self.layersArr[i]((a, b, e), return_conv_activs=True)
+            else:
+                a = self.layersArr[i]((a, b, e)) # calls nfpConv layer on inputs
             a = self.pool(a, e)
+        
         fp = self.op(a, b, e)
-        return fp
+        if return_conv_activs:
+            return activations, fp
+        else: return fp
     
+class ActivationCapture(nn.Module):
+    def __init__(self):
+        super(ActivationCapture, self).__init__()
+        self.activations = None
+
+    def forward(self, x):
+        self.activations = x.clone()
+        return x
+
 class dockingANN(nn.Module):
     def __init__(self, fpl, ba, layers, dropout):
         super(dockingANN, self).__init__()
@@ -195,11 +201,14 @@ class dockingANN(nn.Module):
         self.dropout = dropout
 
         self.ann = nn.Sequential()
+        self.fp_activs = []
         self.buildModel()
         self.to(device)
-
+    
     def buildModel(self):
         for j, (i, o) in enumerate(self.arch):
+            if j == 0:
+                self.ann.add_module(f'fingerprint_capture', ActivationCapture())
             self.ann.add_module(f'linear {j}', nn.Linear(i, o))
             # b = 0.01 if j != len(self.arch) - 1 else np.log([self.pos/self.neg])[0]
             self.ann[-1].bias = torch.nn.init.constant_(torch.nn.Parameter(torch.empty(o, device=device)), 0.01)
@@ -208,9 +217,18 @@ class dockingANN(nn.Module):
             self.ann.add_module(f'dropout {j}', nn.Dropout(self.dropout))
         self.ann.add_module(f'output', nn.Sigmoid())
 
-    def forward(self, input):
+    def forward(self, input, return_fp=False):
         # input = torch.tensor(input, device=device)
-        return self.ann(input)
+        output_from_sequential = self.ann(input)
+        activations=None
+        for module in self.ann.children(): # return first layer FP
+            if isinstance(module, ActivationCapture) and return_fp:
+                activations = module.activations
+
+        if activations is not None: 
+            return output_from_sequential, activations
+        return output_from_sequential
+
     
 class dockingProtocol(nn.Module):
     def __init__(self, params):
@@ -229,5 +247,24 @@ class dockingProtocol(nn.Module):
         )
         self.to(device)
 
-    def forward(self, input):
-        return torch.squeeze(self.model(input))
+    def forward(self, input, return_conv_activs=False, return_fp=False):
+        if return_conv_activs and return_fp:
+            conv_activs, fp_input = self.model[0](input, return_conv_activs=True) # run conv on inputs
+            pred, fp_activs = self.model[1](fp_input, return_fp=True) # run linears on conv-outputs
+            return conv_activs, fp_activs, pred
+        elif return_conv_activs:
+            conv_activs, fp_input = self.model[0](input, return_conv_activs=True)
+            return conv_activs, torch.squeeze(self.model[1](fp_input))
+        elif return_fp:
+            fp_input = self.model[0](input)
+            return self.model[1](fp_input, return_fp=True)
+        else:
+            fp_input = self.model[0](input)
+            return torch.squeeze(self.model[1](fp_input))
+    
+    def save(self, params, dataset, outpath):
+        torch.save({
+            'model_state_dict': self.state_dict(),
+            'params': params,
+            'dataset': dataset
+        }, outpath)

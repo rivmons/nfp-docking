@@ -13,11 +13,17 @@ ioargs = parser.parse_args()
 protein = ioargs.protein
 fplength = ioargs.fplength
 
-dropout = [0.3, 0.5, 0.7]
-learn_rate = [0.001, 0.0001, 0.003, 0.0003]
-weight_decay = [0.0001, 0, 0.001]
+# dropout = [0.3, 0.5, 0.7]
+# learn_rate = [0.001, 0.0001, 0.003, 0.0003]
+# weight_decay = [0.0001, 0, 0.001]
+# oss = [25]
+# bs = [64, 128, 256]
+
+dropout = [0.3]                # static, for testing
+learn_rate = [0.001]
+weight_decay = [0.0001]
 oss = [25]
-bs = [64, 128, 256]
+bs = [64]
 
 hps = []
 for ossz in oss:
@@ -61,13 +67,13 @@ for i in range(len(hps)):
         # f.write('source ../../tensorflow_gpu/bin/activate\n')
  
         o,batch,do,lr,wd = hps[i]
-        f.write('python '+'../../train.py'+' '+'-dropout'+' '+str(do)+' '+'-learn_rate'+' '+str(lr)+' '+'-os'+' '+str(o)+' '+'-bs'+' '+str(batch)+' '+'-protein '+protein+' '+'-fplen '+fplength+' '+'-wd '+str(wd)+' '+'-mnum '+str(i+1)+'\n')
+        f.write('python '+'../../subgraph_train.py'+' '+'-dropout'+' '+str(do)+' '+'-learn_rate'+' '+str(lr)+' '+'-os'+' '+str(o)+' '+'-bs'+' '+str(batch)+' '+'-protein '+protein+' '+'-fplen '+fplength+' '+'-wd '+str(wd)+' '+'-mnum '+str(i+1)+'\n')
 
 
 # need to update when updating model params
-hiddenfeats = [32] * 4
-layers = [num_atom_features()] + hiddenfeats 
 fpl = int(fplength) 
+hiddenfeats = [fpl] * 4
+layers = [num_atom_features()] + hiddenfeats 
 modelParams = {
     "fpl": fpl,
     "conv": {
@@ -75,7 +81,7 @@ modelParams = {
     },
     "ann": {
         "layers": layers,
-        "ba": [fpl, fpl // 4, 1],  # [fpl, fpl // 4, fpl // 16, 1]
+        "ba": [fpl, 1],  # if not doing subgraphs, can be more -- [fpl, fpl // 4, fpl // 16, 1]
         "dropout": 0.0 # arbitrary
     }
 }
