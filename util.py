@@ -4,6 +4,7 @@ from features import num_atom_features, num_bond_features, getAtomFeatures, getB
 from tqdm import tqdm
 from rdkit import Chem
 
+
 def padDim(arr, size, dim, val=0, padR=True):
     padded = [(0, 0)] * len(arr.shape)
     padded[dim] = (0, size - arr.shape[dim]) if padR else (size - arr.shape[dim], 0)
@@ -36,7 +37,7 @@ def buildFeats(smiles, maxDeg=5, maxAtom=70, ds='unknown'):
 
         for bond in molBonds:
             atom1Idx = idxMap[bond.GetBeginAtom().GetIdx()]
-            atom2Idx = idxMap[bond.GetBeginAtom().GetIdx()]
+            atom2Idx = idxMap[bond.GetEndAtom().GetIdx()]
             atom1Neighbor = len(connMat[atom1Idx])
             atom2Neighbor = len(connMat[atom2Idx])
 
