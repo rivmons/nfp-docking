@@ -18,7 +18,10 @@ sure you change the architecture in the base model in createModels.py and train.
 <br/><br/>
 
 3) **results**
-* results will be populated in `src/hpResults.csv`. Files with more data are named corresponding to the model number and are withinn `src/trainingJobs/*` with various names
-* logs for runs are in `src/logs`
+* succinct results will be populated in `{protein}/hpResults.csv`
+* files with detailed results (which you should check) are named corresponding to the model number and are within `{protein}/res/` with various names
+* output logs for runs are in `{protein}/logs/`
+* specific scripts for each model with hyperparam sets are in `{protein}/trainingJobs/`
+* model checkpoints based on model number are stored in `{protein}/models/` 
 
 #### Acknowledgements to [Xuhan Liu](https://github.com/XuhanLiu/NGFP) and the work of [Gentile et. al.](https://pubs.acs.org/doi/10.1021/acscentsci.0c00229) for some of the code in this repository
