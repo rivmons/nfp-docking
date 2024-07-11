@@ -203,9 +203,11 @@ class dockingANN(nn.Module):
             self.ann.add_module(f'linear {j}', nn.Linear(i, o))
             # b = 0.01 if j != len(self.arch) - 1 else np.log([self.pos/self.neg])[0]
             self.ann[-1].bias = torch.nn.init.constant_(torch.nn.Parameter(torch.empty(o, device=device)), 0.01)
-            self.ann.add_module(f'relu act {j}', nn.ReLU())
-            self.ann.add_module(f'batch norm {j}', nn.BatchNorm1d(o))
-            self.ann.add_module(f'dropout {j}', nn.Dropout(self.dropout))
+            if o != 1:
+                self.ann.add_module(f'batch norm {j}', nn.BatchNorm1d(o))
+                self.ann.add_module(f'relu act {j}', nn.ReLU())
+                self.ann.add_module(f'dropout {j}', nn.Dropout(self.dropout))
+            # else: self.ann.add_module(f'relu act {j}', nn.ReLU())
         self.ann.add_module(f'output', nn.Sigmoid())
 
     def forward(self, input):

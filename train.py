@@ -11,10 +11,13 @@ from torch.utils.data import Dataset, DataLoader
 import random
 from sklearn.metrics import auc, precision_recall_curve, roc_curve, confusion_matrix, average_precision_score, precision_score, recall_score, f1_score
 import matplotlib.pyplot as plt
+import dill
+import psutil
 import sys
 from networkP import dockingProtocol
 from util import buildFeats
 import time
+import copy
 
 parser = argparse.ArgumentParser()
 
@@ -38,6 +41,8 @@ protein = cmdlArgs.pro
 fplCmd = int(cmdlArgs.fplength)
 mn = cmdlArgs.model_number
 
+print('hyperparameters: ', end='')
+print(df,lr,wd, sep=', ')
 print(f'interop threads: {torch.get_num_interop_threads()}, intraop threads: {torch.get_num_threads()}')
 
 device = (
@@ -130,10 +135,11 @@ smileData.columns = ['smile', 'zinc_id']
 smileData.set_index('zinc_id', inplace=True)
 
 gfeDist = allData['labels'].to_numpy()
-# print(gfeDist)
-# plt.hist(gfeDist, bins=100)
+print(f'mean,std (gfe): {np.mean(gfeDist)}, {np.std(gfeDist)}')
+tl = 5000 # alter this
+pr = tl / len(smileData)
 gfeDist = np.sort(gfeDist)
-cf = gfeDist[int(0.20 * gfeDist.shape[0])] # gfeDist[int(0.20 * gfeDist.shape[0])]
+cf = gfeDist[int(pr * gfeDist.shape[0])] # gfeDist[int(0.20 * gfeDist.shape[0])]
 print(f'cf = {cf}')
 
 yTrain = trainData.loc[:,'labels']<cf
@@ -185,7 +191,7 @@ yValid = [l[0] for l in validL.reset_index()[['labels']].values.tolist()]
 xTest = testL.reset_index()[['zinc_id', 'smile']].values.tolist()
 yTest = [l[0] for l in testL.reset_index()[['labels']].values.tolist()]
 
-hiddenfeats = [32] * 4
+hiddenfeats = [32] * 4 # 32
 layers = [num_atom_features()] + hiddenfeats 
 fpl = fplCmd 
 modelParams = {
@@ -195,32 +201,12 @@ modelParams = {
     },
     "ann": {
         "layers": layers,
-        "ba": [fpl, fpl // 4, 1],
+        "ba": [fpl, fpl // 4, fpl // 16, 1], # fpl, fpl // 4, 1
         "dropout": df
     }
 }
 print(f'layers: {layers}, through-shape: {list(zip(layers[:-1], layers[1:]))}')
 
-# # load pickled data
-# inputData = None
-# with open("../../data/dataPkl.dat", "rb") as inp:
-#     inputData = dill.load(inp)
-
-# ma, mb = 0, 0
-# batchSize = bs 
-# for i in xTrain:
-#     s = inputData[i]
-#     if ma < s[0].shape[0]: ma = s[0].shape[0]
-#     if mb < s[1].shape[0]: mb = s[1].shape[0]
-# print(ma, mb)
-# data processing -> oversampling, labeling
-# define cf value
-# use pandas to load both smiles and labels
-    # only need smiles and labels; conversion to convFeatures happens in getter of dataloader
-# randomly sample data into test-train-split
-# oversample (reference train.py + internet)
-    # 50/50 split?
-# pass in oversampled smiles with associated binary labels
 trainds = dockingDataset(train=xTrain, 
                         labels=yTrain,
                         name='train')
@@ -249,11 +235,14 @@ optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
 model.load_state_dict(torch.load('../basisModel.pth'), strict=False)
 lendl = len(trainds)
 bestVLoss = 100000000
+bestmodel = None
 lastEpoch = False
 epochs = 200  # 200 initially 
+cepoch = 0
 earlyStop = EarlyStopper(patience=10, min_delta=0.01)
 trainLoss, validLoss = [], []
 for epoch in range(1, epochs + 1):
+    cepoch = epoch
     print(f'\nEpoch {epoch}\n------------------------------------------------')
     
     stime = time.time()
@@ -299,10 +288,9 @@ for epoch in range(1, epochs + 1):
     validLoss.append(valid_loss)
     print(f'\nValidation Results:\nacc: {(100*correct):>0.1f}%, loss: {valid_loss:>8f}\n------------------------------------------------')
     
-    # if valid_loss < bestVLoss:
-    #     bestVLoss = valid_loss
-    #     model_path = f'model_{epoch}'
-    #     torch.save(model.state_dict(), model_path)
+    if valid_loss < bestVLoss:
+        bestVLoss = valid_loss
+        bestmodel = copy.deepcopy(model.state_dict())
 
     if earlyStop.early_stop(valid_loss):
         print(f'validation loss converged to ~{valid_loss}')
@@ -312,46 +300,55 @@ if cStop:
     print(f'training loss converged erroneously')
     sys.exit(0)
 
-epochR = range(1, epochs + 1)
+epochR = range(1, cepoch + 1)
 plt.plot(epochR, trainLoss, label='Training Loss')
 plt.plot(epochR, validLoss, label='Validation Loss')
  
-# Add in a title and axes labels
 plt.title('Training and Validation Loss')
 plt.xlabel('Epochs')
 plt.ylabel('Loss')
  
-# Set the tick locations
 plt.xticks(np.arange(0, epochs + 1, 2))
  
-# Display the plot
 plt.legend(loc='best')
-plt.savefig(f'./loss{mn}.png')
+plt.savefig(f'../res/loss{mn}.png')
 plt.show()
 plt.close()
-with open(f'./lossData{mn}.txt', 'w+') as f:
+with open(f'../res/lossData{mn}.txt', 'w+') as f:
     f.write('train loss, validation loss\n')
-    f.write(f'{",".join([str(x) for x in trainLoss])}')
+    f.write(f'{",".join([str(x) for x in trainLoss])}\n')
     f.write(f'{",".join([str(x) for x in validLoss])}')
 
 try:
-    model.eval()
+    torch.save(bestmodel, f'../models/model{mn}.pth')
+    bmodel = dockingProtocol(modelParams).to(device=device)
+    bmodel.load_state_dict(torch.load(f'../models/model{mn}.pth'), strict=False)
+    bmodel.eval()
     yVal, predVal = [], []
     print(f'final validation using validation set of shape {np.array(yValid).shape}')             
     with torch.no_grad():
         for (a, b, e, (y, zidValidF)) in validdl:
-            preds = model((a, b, e))
+            preds = bmodel((a, b, e))
             predVal += preds.tolist()
             yVal += y.tolist()
-   
+    
+    thresholds = np.arange(0, 1, 0.001)
+    scores = [fbeta_score(yVal, (np.array(predVal) >= t).astype('int'), beta=1.75) for t in thresholds]
+    bestIx = np.argmax(scores)
+    tr = thresholds[bestIx]
+    print(f'threshold={tr:.3f}, f1={scores[bestIx]:.5f}')
     precValid, recValid, thresholdsValid = precision_recall_curve(np.array(yVal), np.array(predVal))
+    scores2 = [fbeta_score(yVal, (np.array(predVal) >= t).astype('int'), beta=1.75) for t in thresholdsValid]
+    bestIx2 = np.argmax(scores2)
+    tr2 = thresholdsValid[bestIx2]
+    print(f'pr-based -> threshold={tr2:.3f}, f1={scores2[bestIx2]:.5f}')
     fprValid, tprValid, threshValid = roc_curve(yVal, predVal)
     aucValid = auc(fprValid, tprValid)
     aucPRValid = average_precision_score(yVal, predVal)
     hitsValid = np.sum(yVal)
-    precisionValid = precision_score(yVal, [int(x >= 0.5) for x in predVal], average='binary')
-    recallValid = recall_score(yVal, [int(x >= 0.5) for x in predVal], average='binary')
-    f1Valid = f1_score(yVal, [int(x >= 0.5) for x in predVal], average='binary')
+    precisionValid = precision_score(yVal, [int(x >= tr) for x in predVal], average='binary')
+    recallValid = recall_score(yVal, [int(x >= tr) for x in predVal], average='binary')
+    f1Valid = f1_score(yVal, [int(x >= tr) for x in predVal], average='binary')
     print(aucValid, aucPRValid, precisionValid, recallValid, f1Valid)
     
     print(f'final testing using testing set of shape {np.array(yTest).shape}') 
@@ -362,11 +359,11 @@ try:
     gfe_delta = []
     with torch.no_grad():
         for(a, b, e, (y, zidTe)) in testdl:
-            pred = model((a, b, e))
+            pred = bmodel((a, b, e))
             predTst += pred.tolist()
             yTst += y.tolist()
             for i, P in enumerate(pred.tolist()):
-                if P >= 0.5: 
+                if P >= tr: 
                     pos.append(zidTe[i])
                     gfe_delta.append(testData.loc[testData['zinc_id'] == zidTe[i]].values[0][1])
                 else: neg.append(zidTe[i])
@@ -376,14 +373,26 @@ try:
     aucTest = auc(fprTest, tprTest)
     aucPRTest = average_precision_score(yTst, predTst)
     hitsTest = np.sum(yTst)
-    precisionTest = precision_score(yTst, [int(x >= 0.5) for x in predTst], average='binary')
-    recallTest = recall_score(yTst, [int(x >= 0.5) for x in predTst], average='binary')
-    f1Test = f1_score(yTst, [int(x >= 0.5) for x in predTst], average='binary')
+    precisionTest = precision_score(yTst, [int(x >= tr) for x in predTst], average='binary')
+    recallTest = recall_score(yTst, [int(x >= tr) for x in predTst], average='binary')
+    f1Test = f1_score(yTst, [int(x >= tr) for x in predTst], average='binary')
     print(aucTest, aucPRTest, precisionTest, recallTest, f1Test)
-    print(confusion_matrix(yTst, [int(x >= 0.5) for x in predTst]))
-    tn, fp, fn, tp = confusion_matrix(yTst, [int(x >= 0.5) for x in predTst]).ravel()
+    print(confusion_matrix(yTst, [int(x >= tr) for x in predTst]))
+    tn, fp, fn, tp = confusion_matrix(yTst, [int(x >= tr) for x in predTst]).ravel()
+    avgGfe = np.mean(gfe_delta)
+    with open(f'../res/trData{mn}.txt', 'w+') as f:
+        f.write("tr,prec,rec,f1,fb(b=1.75)\n")
+        for triter in thresholds.tolist():
+            try:
+                p = precision_score(yTst, [int(x >= triter) for x in predTst], average='binary')
+                r = recall_score(yTst, [int(x >= triter) for x in predTst], average='binary')
+                fm = f1_score(yTst, [int(x >= triter) for x in predTst], average='binary')
+                fb = fbeta_score(yTst, [int(x >= triter) for x in predTst], average='binary', beta=2)
+                f.write(f'{triter},{p},{r},{fm}\n')
+            except:
+                continue
      
-    with open(f'./miscData{mn}.txt', 'w+') as f: 
+    with open(f'../res/miscData{mn}.txt', 'w+') as f: 
         f.write('AUC data (thresholds, fpr, tpr)\n') 
         f.write(f"{','.join([str(x) for x in threshTest.tolist()])}\n")
         f.write(f"{','.join([str(x) for x in fprTest.tolist()])}\n")
@@ -397,7 +406,7 @@ try:
         f.write(f"{','.join([str(x) for x in gfe_delta])}")
      
     enrichDist = testData.loc[testData['labels'] < cf]
-    enrichment = enrichDist.loc[enrichDist.index.isin(pos)]
+    enrichment = enrichDist.loc[enrichDist['zinc_id'].isin(pos)]
     cfLow = testData['labels'].min()
     probs = []
     for i in range(int(cfLow * 100), int((cf + 0.01) * 100)):
@@ -405,14 +414,14 @@ try:
         s2 = enrichment.loc[enrichment['labels'] == np.round(i/100, 2)]
         if s1.empty and s2.empty: continue
         probs.append((np.round(i / 100, 2), s1.shape[0], s2.shape[0]))
-    with open(f'./enrichmentProbs{mn}.txt', 'w+') as f: 
+    with open(f'../res/enrichmentProbs{mn}.txt', 'w+') as f: 
         f.write('prob, total mols w gfe value, total mols predicted as pos w gfe value\n')
         f.write(f"{','.join([str(x[0]) for x in probs])}\n")
         f.write(f"{','.join([str(x[1]) for x in probs])}\n")
         f.write(f"{','.join([str(x[2]) for x in probs])}\n") 
     
     bin_sorted = {k: v for k, v in sorted(bin_o.items(), key=lambda item: item[1], reverse=True)}
-    with open(f'./test_output_{mn}.txt', 'w+') as f:
+    with open(f'../res/test_output_{mn}.txt', 'w+') as f:
         f.write("zid,output\n")
         for vh in bin_sorted:
             f.write(f'{vh},{bin_sorted[vh]}\n')
@@ -446,6 +455,6 @@ try:
     plt.show()
  
     with open('../hpResults.csv','a') as f:
-        f.write(f'{mn},{oss},{bs},{lr},{df},{cf},{fplCmd},{aucValid},{aucPRValid},{precisionValid},{recallValid},{f1Valid},{hitsValid},{aucTest},{aucPRTest},{precisionTest},{recallTest},{f1Test},{hitsTest}\n')
+        f.write(f'{mn},{oss},{bs},{lr},{df},{cf},{fplCmd},{aucValid},{aucPRValid},{precisionValid},{recallValid},{f1Valid},{hitsValid},{tr},{aucTest},{aucPRTest},{precisionTest},{recallTest},{f1Test},{hitsTest},{avgGfe}\n')
 except:
     pass
