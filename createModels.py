@@ -28,7 +28,7 @@ proteinn = protein
 # bs = [64, 128, 256] # was [32, 64] as of acease7
 dropout = [0, 0.3, 0.5]
 learn_rate = [0.001, 0.0001, 0.01]
-weight_decay = [0.0001] 
+weight_decay = [0.0001, 0.001, 0.01, 0.1]
 oss = [25]
 bs = [64, 128, 256]
 

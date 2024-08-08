@@ -9,7 +9,7 @@ from features import \
     num_bond_features
 from torch.utils.data import Dataset, DataLoader
 import random
-from sklearn.metrics import auc, precision_recall_curve, roc_curve, confusion_matrix, average_precision_score, precision_score, recall_score, f1_score
+from sklearn.metrics import auc, precision_recall_curve, roc_curve, confusion_matrix, average_precision_score, precision_score, recall_score, f1_score, fbeta_score
 import matplotlib.pyplot as plt
 import dill
 import psutil
@@ -60,28 +60,17 @@ class EarlyStopper:
         self.min_delta = min_delta
         self.counter = 0
         self.min_validation_loss = float('inf')
-        self.closs = 0
-        self.ccounter = 0
 
     def early_stop(self, validation_loss):
         if validation_loss < self.min_validation_loss:
             self.min_validation_loss = validation_loss
             self.counter = 0
-        elif np.abs([self.min_validation_loss - validation_loss])[0] <= self.min_delta:
+        elif validation_loss > (self.min_validation_loss + self.min_delta):
             self.counter += 1
             if self.counter >= self.patience:
                 return True
         return False
     
-    def early_cstop(self, train_loss):
-        if train_loss == self.closs:
-            self.ccounter += 1
-        else:
-            self.closs = train_loss
-            self.ccounter = 0
-        if self.ccounter == 200:
-            return True
-        return False
 
 class dockingDataset(Dataset):
     def __init__(self, train, labels, maxa=70, maxd=6, name='unknown'):
@@ -139,7 +128,7 @@ print(f'mean,std (gfe): {np.mean(gfeDist)}, {np.std(gfeDist)}')
 tl = 5000 # alter this
 pr = tl / len(smileData)
 gfeDist = np.sort(gfeDist)
-cf = gfeDist[int(pr * gfeDist.shape[0])] # gfeDist[int(0.20 * gfeDist.shape[0])]
+cf = gfeDist[int(0.20 * gfeDist.shape[0])] # gfeDist[int(pr * gfeDist.shape[0])]
 print(f'cf = {cf}')
 
 yTrain = trainData.loc[:,'labels']<cf
@@ -239,7 +228,7 @@ bestmodel = None
 lastEpoch = False
 epochs = 200  # 200 initially 
 cepoch = 0
-earlyStop = EarlyStopper(patience=10, min_delta=0.01)
+earlyStop = EarlyStopper(patience=50, min_delta=0.01)
 trainLoss, validLoss = [], []
 for epoch in range(1, epochs + 1):
     cepoch = epoch
@@ -261,16 +250,12 @@ for epoch in range(1, epochs + 1):
 
         corr += (preds.round() == Y).type(torch.float).sum().item()
         runningLoss += preds.shape[0] * loss.item()
-
-        cStop = earlyStop.early_cstop(loss.item())
-        if cStop: break
    
         if batch % (np.ceil(lendl / bs / 10)) == 0:
             lossDisplay, currentDisplay = loss.item(), (batch + 1)
             print(f'loss: {lossDisplay:>7f} [{((batch + 1) * len(a)):>5d}/{lendl:>5d}]')
 
     trainLoss.append(runningLoss/lendl)
-    if cStop: break
     print(f'Time to complete epoch: {time.time() - stime}')
     print(f'\nTraining Epoch {epoch} Results:\nacc: {((100 * (corr/lendl))):>0.1f}%, loss: {runningLoss/lendl:>8f}\n------------------------------------------------')
     
@@ -291,14 +276,11 @@ for epoch in range(1, epochs + 1):
     if valid_loss < bestVLoss:
         bestVLoss = valid_loss
         bestmodel = copy.deepcopy(model.state_dict())
+        print(f"best model checkpointed at epoch {epoch}")
 
     if earlyStop.early_stop(valid_loss):
         print(f'validation loss converged to ~{valid_loss}')
         break
-
-if cStop: 
-    print(f'training loss converged erroneously')
-    sys.exit(0)
 
 epochR = range(1, cepoch + 1)
 plt.plot(epochR, trainLoss, label='Training Loss')
@@ -428,7 +410,7 @@ try:
     
     plt.plot([x[0] for x in probs], [x[2]/x[1] for x in probs], 'b--', label='pdf of enrichment')
     plt.ylim([0, 1.2])
-    plt.savefig(f'./enrichment{mn}.png')
+    plt.savefig(f'../res/enrichment{mn}.png')
     plt.show()
     plt.close()
 
@@ -440,7 +422,7 @@ try:
     plt.ylabel('True Positive Rate')
     plt.title('Receiver Operating Characteristic')
     plt.legend(loc="lower right")
-    plt.savefig(f'./rocCurve_{mn}.png')
+    plt.savefig(f'../res/rocCurve_{mn}.png')
     plt.show()
     plt.close()
     
@@ -451,7 +433,7 @@ try:
     plt.ylabel('Precision')
     plt.title('Precision-Recall Curve')
     plt.legend(loc='lower right')
-    plt.savefig(f'./prCurve_{mn}.png')
+    plt.savefig(f'../res/prCurve_{mn}.png')
     plt.show()
  
     with open('../hpResults.csv','a') as f:
