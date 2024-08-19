@@ -26,11 +26,17 @@ proteinn = protein
 # weight_decay = [0.0001, 0, 0.001] # 0.0001, 0, 0.001
 # oss = [25]
 # bs = [64, 128, 256] # was [32, 64] as of acease7
-dropout = [0, 0.3, 0.5]
-learn_rate = [0.001, 0.0001, 0.01]
-weight_decay = [0.0001, 0.001, 0.01, 0.1]
+
+dropout = [0]
+learn_rate = [0.001, 0.0003]
+weight_decay = [0, 0.0001, 0.001]
 oss = [25]
-bs = [64, 128, 256]
+bs = [256]
+# dropout = [0]
+# learn_rate = [0.0003]
+# weight_decay = [0.001]
+# oss = [25]
+# bs = [256]
 
 hps = []
 for ossz in oss:
@@ -69,7 +75,7 @@ except:
 
 with open(f'./{proteinn}/hpResults.csv', 'w+') as f:
     # f.write(f'{mn},{oss},{bs},{lr},{df},{cf},{fplCmd},{aucValid},{aucPRValid},{precisionValid},{recallValid},{f1Valid},{hitsValid},{aucTest},{aucPRTest},{precisionTest},{recallTest},{f1Test},{hitsTest}\n')
-    f.write(f'model number,oversampled size,batch size,learning rate,dropout rate,gfe threshold,fingerprint length,validation auc,validation prauc,validation precision,validation recall,validation f1,validation hits,tr,test auc,test prauc,test precision,test recall,test f1,test hits,avg gfe\n')
+    f.write(f'model number,oversampled size,batch size,learning rate,dropout rate,gfe threshold,fingerprint length,validation auc,validation prauc,validation precision,validation recall,validation f1,validation hits,tr,test auc,test prauc,test precision,test recall,test f1,test hits,avg gfe,t1enrichment,t5enrichment,t10enrichment,t50enrichment,t100enrichment\n')
     
 
 for f in os.listdir(f'./{proteinn}/trainingJobs/'):
@@ -103,12 +109,12 @@ modelParams = {
     },
     "ann": {
         "layers": layers,
-        "ba": [fpl, fpl // 4, fpl // 16, 1],  # [fpl, fpl // 4, fpl // 8, 1]
+        "ba": [fpl, fpl // 4, 1],  # [fpl, fpl // 4, fpl // 16, 1]
         "dropout": 0.0 # arbitrary
     }
 }
 model = dockingProtocol(modelParams)
-print(model)
+# print(model)
 pytorch_total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print(f'model trainable params: {pytorch_total_params}')
 save(model.state_dict(), f'./{proteinn}/basisModel.pth')

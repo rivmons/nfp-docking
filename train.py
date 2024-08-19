@@ -10,14 +10,15 @@ from features import \
 from torch.utils.data import Dataset, DataLoader
 import random
 from sklearn.metrics import auc, precision_recall_curve, roc_curve, confusion_matrix, average_precision_score, precision_score, recall_score, f1_score, fbeta_score
+from sklearn.utils import compute_class_weight
 import matplotlib.pyplot as plt
-import dill
-import psutil
 import sys
-from networkP import dockingProtocol
+import pickle
+from networkP import dockingProtocol, dockingDataset
 from util import buildFeats
 import time
 import copy
+import os
 
 parser = argparse.ArgumentParser()
 
@@ -61,7 +62,10 @@ class EarlyStopper:
         self.counter = 0
         self.min_validation_loss = float('inf')
 
-    def early_stop(self, validation_loss):
+    def early_stop(self, validation_loss, train_loss):
+        if (validation_loss < train_loss) and ((validation_loss - bestVLoss) <= (self.min_delta * 25)): 
+            self.counter = self.patience // 2 if self.patience < 15 else self.patience - 10 # give leeway to match losses
+
         if validation_loss < self.min_validation_loss:
             self.min_validation_loss = validation_loss
             self.counter = 0
@@ -70,23 +74,6 @@ class EarlyStopper:
             if self.counter >= self.patience:
                 return True
         return False
-    
-
-class dockingDataset(Dataset):
-    def __init__(self, train, labels, maxa=70, maxd=6, name='unknown'):
-        # self.train = (zid, smile), self.label = (bin label)
-        self.train = train
-        self.labels = torch.from_numpy(np.array(labels)).float()
-        self.maxA = maxa
-        self.maxD = maxd
-        self.a, self.b, self.e = buildFeats([x[1] for x in self.train], self.maxD, self.maxA, name)
-
-    def __len__(self):
-        return self.a.shape[0]
-
-    def __getitem__(self, idx):
-        return self.a[idx], self.b[idx], self.e[idx], (self.labels[idx], self.train[idx][0])
-
 
 def labelsToDF(fname):
     arr = []
@@ -128,7 +115,7 @@ print(f'mean,std (gfe): {np.mean(gfeDist)}, {np.std(gfeDist)}')
 tl = 5000 # alter this
 pr = tl / len(smileData)
 gfeDist = np.sort(gfeDist)
-cf = gfeDist[int(0.20 * gfeDist.shape[0])] # gfeDist[int(pr * gfeDist.shape[0])]
+cf = gfeDist[int(0.2 * gfeDist.shape[0])] # gfeDist[int(pr * gfeDist.shape[0])]
 print(f'cf = {cf}')
 
 yTrain = trainData.loc[:,'labels']<cf
@@ -141,18 +128,18 @@ hitC = yHit.shape[0]
 nhitC = yNHit.shape[0]
 print(f'hits in dataset: {hitC}, non-hits in dataset: {nhitC}')
 
-oversampleSize = np.min([nhitC, 50000, hitC*oss*8])
-print(f'sample size for oversampled dataset: {oversampleSize}')
+# oversampleSize = np.min([nhitC, 50000, hitC*oss*8]) # [nhitC, 50000, hitC*oss*8]
+# print(f'sample size for oversampled dataset: {oversampleSize}')
 
-trainTuples = []
-for i in range(oversampleSize):
-    iPos = random.randint(0, hitC-1)
-    iNeg = random.randint(0, nhitC-1)
-    # 50-50 balanced
-    trainTuples.append((yHit.index[iPos], 1))
-    trainTuples.append((yNHit.index[iNeg], 0))
+# trainTuples = []
+# for i in range(oversampleSize):
+#     iPos = random.randint(0, hitC-1)
+#     iNeg = random.randint(0, nhitC-1)
+#     # 50-50 balanced
+#     trainTuples.append((yHit.index[iPos], 1))
+#     trainTuples.append((yNHit.index[iNeg], 0))
 
-random.shuffle(trainTuples)
+# random.shuffle(trainTuples)
 xValidL = validationData.index.tolist()
 yValid = (validationData.loc[:, 'labels']<cf).astype(int).to_numpy().tolist()
 xTestL = testData.index.tolist()
@@ -160,10 +147,20 @@ yTest = (testData.loc[:, 'labels']<cf).astype(int).to_numpy().tolist()
 yHit = []
 yNHit = []
 
-trainL = pd.DataFrame(trainTuples)
+# trainL = pd.DataFrame(trainTuples)
+# trainL.columns = ['zinc_id', 'labels']
+# trainL.set_index('zinc_id', inplace=True)
+# trainL = pd.merge(trainL, smileData, on='zinc_id')
+
+#
+# trainData = pd.concat([trainData, (trainData.loc[trainData['labels']<cf]).sample(frac=0.1)]) # very little oversampling
+trainL = (trainData.loc[:, 'labels']<cf).astype(int).reset_index()
 trainL.columns = ['zinc_id', 'labels']
 trainL.set_index('zinc_id', inplace=True)
 trainL = pd.merge(trainL, smileData, on='zinc_id')
+print(trainL[trainL.labels==0].shape[0], trainL[trainL.labels==1].shape[0])
+#
+
 validL = (validationData.loc[:, 'labels']<cf).astype(int).reset_index()
 testL = (testData.loc[:, 'labels']<cf).astype(int).reset_index()
 validL.columns = ['zinc_id', 'labels']
@@ -180,6 +177,9 @@ yValid = [l[0] for l in validL.reset_index()[['labels']].values.tolist()]
 xTest = testL.reset_index()[['zinc_id', 'smile']].values.tolist()
 yTest = [l[0] for l in testL.reset_index()[['labels']].values.tolist()]
 
+class_weights = compute_class_weight('balanced', classes=np.unique(yTrain), y=yTrain)
+print(f'class weights: {class_weights}')
+
 hiddenfeats = [32] * 4 # 32
 layers = [num_atom_features()] + hiddenfeats 
 fpl = fplCmd 
@@ -190,7 +190,7 @@ modelParams = {
     },
     "ann": {
         "layers": layers,
-        "ba": [fpl, fpl // 4, fpl // 16, 1], # fpl, fpl // 4, 1
+        "ba": [fpl, fpl // 4, 1], # fpl, fpl // 4, fpl // 16, 1
         "dropout": df
     }
 }
@@ -218,17 +218,19 @@ print(model)
 totalParams = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print(f'total trainable params: {totalParams}')
 print(sum(yTrain), len(yTrain))
-lossFn = nn.BCELoss()
+# weighted loss function # lossFn = nn.BCEWithLogitsLoss(pos_weight=torch.FloatTensor([class_weights[1] / class_weights[0]]).to(device)) * take out sigmoid from arch *
+lossFn = nn.BCEWithLogitsLoss(pos_weight=torch.FloatTensor([class_weights[1] / class_weights[0]]).to(device))
 # adam, lr=0.01, weight_decay=0.001, prop=0.2, dropout=0.2
 optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
+lrscheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
 model.load_state_dict(torch.load('../basisModel.pth'), strict=False)
 lendl = len(trainds)
 bestVLoss = 100000000
 bestmodel = None
 lastEpoch = False
-epochs = 200  # 200 initially 
+epochs = 200
 cepoch = 0
-earlyStop = EarlyStopper(patience=50, min_delta=0.01)
+earlyStop = EarlyStopper(patience=15, min_delta=0.0001)
 trainLoss, validLoss = [], []
 for epoch in range(1, epochs + 1):
     cepoch = epoch
@@ -248,6 +250,7 @@ for epoch in range(1, epochs + 1):
         optimizer.step()
         optimizer.zero_grad()
 
+        preds = torch.sigmoid(preds)
         corr += (preds.round() == Y).type(torch.float).sum().item()
         runningLoss += preds.shape[0] * loss.item()
    
@@ -267,20 +270,30 @@ for epoch in range(1, epochs + 1):
         for (a, b, e, (y, zidValid)) in validdl:
             preds = model((a, b, e))
             valid_loss += lossFn(preds.to(device), y.to(device)).item()
+            preds = torch.sigmoid(preds)
             correct += (preds.to(device).round() == y.to(device)).type(torch.float).sum().item()
     valid_loss /= num_batches
     correct /= size
     validLoss.append(valid_loss)
-    print(f'\nValidation Results:\nacc: {(100*correct):>0.1f}%, loss: {valid_loss:>8f}\n------------------------------------------------')
+    # lrscheduler.step(valid_loss)
+    print(f'\nValidation Results:\nacc: {(100*correct):>0.1f}%, loss: {valid_loss:>8f}, lr: {optimizer.param_groups[0]["lr"]:>3f}\n------------------------------------------------')
     
     if valid_loss < bestVLoss:
         bestVLoss = valid_loss
         bestmodel = copy.deepcopy(model.state_dict())
         print(f"best model checkpointed at epoch {epoch}")
 
-    if earlyStop.early_stop(valid_loss):
+    if earlyStop.early_stop(valid_loss, trainLoss[-1]):
         print(f'validation loss converged to ~{valid_loss}')
         break
+
+try:
+    os.mkdir(f'../res/model{mn}')
+except:
+    pass
+
+with open(f'../res/model{mn}/modelparams.pkl', 'wb') as f:
+    pickle.dump(modelParams, f)
 
 epochR = range(1, cepoch + 1)
 plt.plot(epochR, trainLoss, label='Training Loss')
@@ -290,13 +303,13 @@ plt.title('Training and Validation Loss')
 plt.xlabel('Epochs')
 plt.ylabel('Loss')
  
-plt.xticks(np.arange(0, epochs + 1, 2))
+plt.xticks(np.arange(0, cepoch + 1, 2 if cepoch < 20 else cepoch // 10))
  
 plt.legend(loc='best')
-plt.savefig(f'../res/loss{mn}.png')
-plt.show()
+plt.savefig(f'../res/model{mn}/loss.png')
+# plt.show()
 plt.close()
-with open(f'../res/lossData{mn}.txt', 'w+') as f:
+with open(f'../res/model{mn}/lossData.txt', 'w+') as f:
     f.write('train loss, validation loss\n')
     f.write(f'{",".join([str(x) for x in trainLoss])}\n')
     f.write(f'{",".join([str(x) for x in validLoss])}')
@@ -311,6 +324,7 @@ try:
     with torch.no_grad():
         for (a, b, e, (y, zidValidF)) in validdl:
             preds = bmodel((a, b, e))
+            preds = torch.sigmoid(preds)
             predVal += preds.tolist()
             yVal += y.tolist()
     
@@ -342,6 +356,7 @@ try:
     with torch.no_grad():
         for(a, b, e, (y, zidTe)) in testdl:
             pred = bmodel((a, b, e))
+            pred = torch.sigmoid(pred)
             predTst += pred.tolist()
             yTst += y.tolist()
             for i, P in enumerate(pred.tolist()):
@@ -362,11 +377,17 @@ try:
     print(confusion_matrix(yTst, [int(x >= tr) for x in predTst]))
     tn, fp, fn, tp = confusion_matrix(yTst, [int(x >= tr) for x in predTst]).ravel()
     avgGfe = np.mean(gfe_delta)
-    with open(f'../res/trData{mn}.txt', 'w+') as f:
+
+    with open(f'../res/model{mn}/testset.txt', 'w+') as f:
+        f.write('zinc_id,gfe\n')
+        for i, r in testData.reset_index().iterrows():
+            f.write(f'{r["zinc_id"]},{r["labels"]}\n')
+
+    with open(f'../res/model{mn}/trData.txt', 'w+') as f:
         f.write("tr,prec,rec,f1,fb(b=1.75)\n")
         for triter in thresholds.tolist():
             try:
-                p = precision_score(yTst, [int(x >= triter) for x in predTst], average='binary')
+                p = precision_score(yTst, [int(x >= triter) for x in predTst], average='binary', zero_division=0)
                 r = recall_score(yTst, [int(x >= triter) for x in predTst], average='binary')
                 fm = f1_score(yTst, [int(x >= triter) for x in predTst], average='binary')
                 fb = fbeta_score(yTst, [int(x >= triter) for x in predTst], average='binary', beta=2)
@@ -374,7 +395,7 @@ try:
             except:
                 continue
      
-    with open(f'../res/miscData{mn}.txt', 'w+') as f: 
+    with open(f'../res/model{mn}/miscData.txt', 'w+') as f: 
         f.write('AUC data (thresholds, fpr, tpr)\n') 
         f.write(f"{','.join([str(x) for x in threshTest.tolist()])}\n")
         f.write(f"{','.join([str(x) for x in fprTest.tolist()])}\n")
@@ -396,22 +417,32 @@ try:
         s2 = enrichment.loc[enrichment['labels'] == np.round(i/100, 2)]
         if s1.empty and s2.empty: continue
         probs.append((np.round(i / 100, 2), s1.shape[0], s2.shape[0]))
-    with open(f'../res/enrichmentProbs{mn}.txt', 'w+') as f: 
+    with open(f'../res/model{mn}/enrichmentProbs.txt', 'w+') as f: 
         f.write('prob, total mols w gfe value, total mols predicted as pos w gfe value\n')
         f.write(f"{','.join([str(x[0]) for x in probs])}\n")
         f.write(f"{','.join([str(x[1]) for x in probs])}\n")
         f.write(f"{','.join([str(x[2]) for x in probs])}\n") 
     
     bin_sorted = {k: v for k, v in sorted(bin_o.items(), key=lambda item: item[1], reverse=True)}
-    with open(f'../res/test_output_{mn}.txt', 'w+') as f:
+    with open(f'../res/model{mn}/test_output.txt', 'w+') as f:
         f.write("zid,output\n")
         for vh in bin_sorted:
             f.write(f'{vh},{bin_sorted[vh]}\n')
     
+    ranked_mols = sorted(bin_o.items(), key=lambda item: item[1], reverse=True)
+    tnenrich = []
+    for n in [1, 5, 10, 50, 100]:
+        tpn = len([m for m in ranked_mols[:n] if m[0] in pos and m[0] in enrichDist.zinc_id.values])
+        c = 0
+        for i in range(100):
+            subsetm = random.sample(ranked_mols, n)
+            c += len([m for m in subsetm if m[0] in pos and m[0] in enrichDist.zinc_id.values])
+        tnenrich.append(tpn/(c/100))
+    
     plt.plot([x[0] for x in probs], [x[2]/x[1] for x in probs], 'b--', label='pdf of enrichment')
     plt.ylim([0, 1.2])
-    plt.savefig(f'../res/enrichment{mn}.png')
-    plt.show()
+    plt.savefig(f'../res/model{mn}/enrichment.png')
+    # plt.show()
     plt.close()
 
     plt.plot(fprTest, tprTest, label=f'ROC curve (area = {aucTest:.2f})')
@@ -422,8 +453,8 @@ try:
     plt.ylabel('True Positive Rate')
     plt.title('Receiver Operating Characteristic')
     plt.legend(loc="lower right")
-    plt.savefig(f'../res/rocCurve_{mn}.png')
-    plt.show()
+    plt.savefig(f'../res/model{mn}/rocCurve.png')
+    # plt.show()
     plt.close()
     
     plt.plot(recTest, precTest, marker='o', color='darkorange', lw=2, label='PR Curve (AUC = %0.2f)' % aucPRTest)
@@ -433,10 +464,10 @@ try:
     plt.ylabel('Precision')
     plt.title('Precision-Recall Curve')
     plt.legend(loc='lower right')
-    plt.savefig(f'../res/prCurve_{mn}.png')
-    plt.show()
+    plt.savefig(f'../res/model{mn}/prCurve.png')
+    # plt.show()
  
     with open('../hpResults.csv','a') as f:
-        f.write(f'{mn},{oss},{bs},{lr},{df},{cf},{fplCmd},{aucValid},{aucPRValid},{precisionValid},{recallValid},{f1Valid},{hitsValid},{tr},{aucTest},{aucPRTest},{precisionTest},{recallTest},{f1Test},{hitsTest},{avgGfe}\n')
+        f.write(f'{mn},{oss},{bs},{lr},{df},{cf},{fplCmd},{aucValid},{aucPRValid},{precisionValid},{recallValid},{f1Valid},{hitsValid},{tr},{aucTest},{aucPRTest},{precisionTest},{recallTest},{f1Test},{hitsTest},{avgGfe},{tnenrich[0]},{tnenrich[1]},{tnenrich[2]},{tnenrich[3]},{tnenrich[4]}\n')
 except:
     pass

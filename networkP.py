@@ -208,7 +208,7 @@ class dockingANN(nn.Module):
                 self.ann.add_module(f'relu act {j}', nn.ReLU())
                 self.ann.add_module(f'dropout {j}', nn.Dropout(self.dropout))
             # else: self.ann.add_module(f'relu act {j}', nn.ReLU())
-        self.ann.add_module(f'output', nn.Sigmoid())
+        # self.ann.add_module(f'output', nn.Sigmoid()) # * for bcewithlogitsloss
 
     def forward(self, input):
         # input = torch.tensor(input, device=device)
@@ -232,4 +232,19 @@ class dockingProtocol(nn.Module):
         self.to(device)
 
     def forward(self, input):
-        return torch.squeeze(self.model(input))
+        return torch.squeeze(self.model(input)) # torch.squeeze
+
+class dockingDataset(Dataset):
+    def __init__(self, train, labels, maxa=70, maxd=6, name='unknown'):
+        # self.train = (zid, smile), self.label = (bin label)
+        self.train = train
+        self.labels = torch.from_numpy(np.array(labels)).float()
+        self.maxA = maxa
+        self.maxD = maxd
+        self.a, self.b, self.e = buildFeats([x[1] for x in self.train], self.maxD, self.maxA, name)
+
+    def __len__(self):
+        return self.a.shape[0]
+
+    def __getitem__(self, idx):
+        return self.a[idx], self.b[idx], self.e[idx], (self.labels[idx], self.train[idx][0])
