@@ -2,7 +2,7 @@ import os
 import argparse
 import glob
 import pandas as pd
-from networkP import dockingProtocol
+from networkE import dockingProtocol
 from features import num_atom_features
 from torch import save
 
@@ -28,10 +28,10 @@ proteinn = protein
 # bs = [64, 128, 256] # was [32, 64] as of acease7
 
 dropout = [0]
-learn_rate = [0.001, 0.0003]
-weight_decay = [0, 0.0001, 0.001]
+learn_rate = [0.001, 0]
+weight_decay = [0]
 oss = [25]
-bs = [256]
+bs = [256, 128]
 # dropout = [0]
 # learn_rate = [0.0003]
 # weight_decay = [0.001]
@@ -104,12 +104,14 @@ layers = [num_atom_features()] + hiddenfeats
 fpl = int(fplength) 
 modelParams = {
     "fpl": fpl,
+    "batchsize": 0,
     "conv": {
-        "layers": layers
+        "layers": layers,
+        "activations": False
     },
     "ann": {
         "layers": layers,
-        "ba": [fpl, fpl // 4, 1],  # [fpl, fpl // 4, fpl // 16, 1]
+        "ba": [fpl, fpl // 4, fpl // 8, 1],  # [fpl, fpl // 4, fpl // 16, 1]
         "dropout": 0.0 # arbitrary
     }
 }

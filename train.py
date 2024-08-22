@@ -185,12 +185,14 @@ layers = [num_atom_features()] + hiddenfeats
 fpl = fplCmd 
 modelParams = {
     "fpl": fpl,
+    "batchsize": bs,
     "conv": {
-        "layers": layers
+        "layers": layers,
+        "activations": False
     },
     "ann": {
         "layers": layers,
-        "ba": [fpl, fpl // 4, 1], # fpl, fpl // 4, fpl // 16, 1
+        "ba": [fpl, fpl // 4, fpl // 8, 1], # fpl, fpl // 4, fpl // 16, 1
         "dropout": df
     }
 }
