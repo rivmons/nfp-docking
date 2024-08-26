@@ -12,6 +12,22 @@ import io
 from PIL import Image
 import glob
 import statistics
+import argparse
+from util import buildFeats
+
+parser = argparse.ArgumentParser()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('-time', '--t', default=False, required=False)
+parser.add_argument('-substructure', '--s', default=False, required=False)
+parser.add_argument('-permutation', '--p', default=False, required=False)
+
+dude = True
+
+args = parser.parse_args()
+tm = bool(args.t)
+substr = bool(args.s)
+permutation = bool(args.p)
 
 device = (
     "cuda"
@@ -21,7 +37,7 @@ device = (
     else "cpu"
 )
 
-path = './acease/'
+path = './esr1/'
 mn = 1
 
 modelp = None
@@ -31,20 +47,39 @@ with open(f'{path}res/model{mn}/modelparams.pkl', 'rb') as f:
 testf = open(f'{path}res/model{mn}/testset.txt', 'r')
 testd = [i.strip().split(",") for i in testf.readlines()[1:]]
 
-smilesf = open('./data/smilesDS.smi', 'r')
-smilesd = [i.strip().split(" ") for i in smilesf.readlines()]
-smilesdict = {
-    i[1]: i[0]
-    for i in smilesd
-}
+smilesdict = None
+if not dude:
+    smilesf = open('./data/smilesDS.smi', 'r')
+    smilesd = [i.strip().split(" ") for i in smilesf.readlines()]
+    smilesdict = {
+        i[1]: i[0]
+        for i in smilesd
+    }
+else:
+    protein_path = './dude/' + path.split('/')[1]
+
+    activef = open(f'{protein_path}/actives_final.ism', 'r')
+    decoyf = open(f'{protein_path}/decoys_final.ism', 'r')
+
+    actives_d = {
+        line[1] : line[0]
+        for line in [l.strip().split(" ") for l in activef.readlines()]
+    }
+    decoys_d = {
+        line[1] : line[0]
+        for line in [l.strip().split(" ") for l in decoyf.readlines()]
+    }
+    
+    smilesdict = actives_d
+    smilesdict.update(decoys_d)
 
 for i, mol in enumerate(testd):
     testd[i].append(smilesdict[mol[0]])
 
 # [zid, smile], 0/1
 cf = -10
-xtest = [[i[0], i[2]] for i in testd][:1024]
-ytest = [int(float(i[1]) < cf) for i in testd][:1024]
+xtest = [[i[0], i[3]] for i in testd]
+ytest = [int(float(i[2]) < cf) for i in testd]
 
 modelp["conv"]["activations"] = True
 model = dockingProtocol(modelp).to(device=device)
@@ -143,7 +178,7 @@ def plot(activations):
 
 def getTimes():
     jobs = glob.glob(path + 'trainingJobs/*')
-    bs_look = 128
+    bs_look = 256 
     times = []
     epochs = []
     for job in jobs:
@@ -159,6 +194,33 @@ def getTimes():
             epochs.append(epochc)
     print(statistics.mean(times), statistics.stdev(times), statistics.mean(epochs), statistics.stdev(epochs))
 
+def permutation_importance():
+    np.random.seed(0)
+    with torch.no_grad():
+        a, b, e = buildFeats([x[1] for x in xtest], 6, 70, "perm_test")
+        permuted_matrix = [[i, 0] for i in range(a.shape[2])]
+        Y = torch.Tensor(ytest).to(device)
+        orig_preds, _ = model((a, b, e))
+        orig_preds = torch.sigmoid(orig_preds)
+        orig_acc = (orig_preds.to(device).round() == Y.to(device)).type(torch.float).sum().item() / orig_preds.shape[0]
+        permuted_sum = 0
+        for feat_ix in range(a.shape[2]):
+            atomfeats = a.clone().detach()
+            feature_vector = atomfeats[:, :, feat_ix]
+            idx = torch.randperm(feature_vector.nelement())
+            feature_vector = feature_vector.view(-1)[idx].view(feature_vector.size())
+            atomfeats[:, :, feat_ix] = feature_vector
+            permuted_preds, _ = model((atomfeats, b, e))
+            permuted_preds = torch.sigmoid(permuted_preds)
+            permuted_acc = (permuted_preds.to(device).round() == Y.to(device)).type(torch.float).sum().item() / permuted_preds.shape[0]
+            permuted_matrix[feat_ix] = [feat_ix, orig_acc - permuted_acc]
+            permuted_sum += orig_acc - permuted_acc
+    
+    permuted_matrix = [[i[0], i[1]] for i in permuted_matrix]
+    permuted_matrix = sorted(permuted_matrix, key=lambda x: -x[1])
+    print(permuted_matrix)
+    # 0-43 : atoms, 44-49: degree, 50-55: hydrogens, 56-61: implicit valence, 62: aromatic
+
 
 # SHAP
 # batch = next(iter(testdl))
@@ -169,6 +231,9 @@ def getTimes():
 # g = torch.Tensor([a[64:68], b[64:68], e[64:68]])
 # # shap_values = explainer.shap_values((a[64:68], b[64:68], e[64:68]))
 
-getTimes()
-if False:
-    plot(activations)
+if substr:
+    plot(activations=activations)
+if tm:
+    getTimes()
+if permutation:
+    permutation_importance()

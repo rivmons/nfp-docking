@@ -99,7 +99,7 @@ for i in range(len(hps)):
 
 
 # need to update when updating model params
-hiddenfeats = [32] * 4 # [32] * 4
+hiddenfeats = [64] * 4 # [32] * 4
 layers = [num_atom_features()] + hiddenfeats 
 fpl = int(fplength) 
 modelParams = {

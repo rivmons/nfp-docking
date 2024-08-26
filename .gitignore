@@ -1,3 +1,13 @@
 __pycache__/
 traintest.sh
 oneModel.sh
+data/*.dat
+data/*.txt
+data/*.csv
+data/*.smi
+dude/
+past/
+substructure_activations/
+trainlocal.sh
+Makefile
+molgraph.py

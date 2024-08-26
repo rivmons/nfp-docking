@@ -14,11 +14,12 @@ from sklearn.utils import compute_class_weight
 import matplotlib.pyplot as plt
 import sys
 import pickle
-from networkP import dockingProtocol, dockingDataset
+from networkE import dockingProtocol, dockingDataset
 from util import buildFeats
 import time
 import copy
 import os
+import traceback
 
 parser = argparse.ArgumentParser()
 
@@ -41,6 +42,7 @@ bs=int(cmdlArgs.batch_size)
 protein = cmdlArgs.pro
 fplCmd = int(cmdlArgs.fplength)
 mn = cmdlArgs.model_number
+dude = True 
 
 print('hyperparameters: ', end='')
 print(df,lr,wd, sep=', ')
@@ -92,95 +94,172 @@ def labelsToDF(fname):
             except:
                 continue
     df = pd.DataFrame(arr)
-    df.columns = ['labels', 'zinc_id']
+    df.columns = ['labels', 'id']
     return df
 
-# 70-15-15 split
-allData = labelsToDF(f'../../data/dock_{protein}.txt')
-allData.set_index('zinc_id', inplace=True)
-trainData, validationData, testData = np.split(allData.sample(frac=1), 
-                                        [int(.70*len(allData)), int(.85*len(allData))])
+def protein_data():
+    # 70-15-15 split
+    allData = labelsToDF(f'../../data/dock_{protein}.txt')
+    allData.set_index('id', inplace=True)
+    trainData, validationData, testData = np.split(allData.sample(frac=1), 
+                                            [int(.70*len(allData)), int(.85*len(allData))])
 
-print(f'merged df shapes: {trainData.shape}, {validationData.shape}, {testData.shape}')
+    print(f'merged df shapes: {trainData.shape}, {validationData.shape}, {testData.shape}')
 
-trainData = pd.DataFrame(trainData)
-validationData = pd.DataFrame(validationData)
-testData = pd.DataFrame(testData)
-smileData = pd.read_csv('../../data/smilesDS.smi', delimiter=' ')
-smileData.columns = ['smile', 'zinc_id']
-smileData.set_index('zinc_id', inplace=True)
+    trainData = pd.DataFrame(trainData)
+    validationData = pd.DataFrame(validationData)
+    testData = pd.DataFrame(testData)
+    smileData = pd.read_csv('../../data/smilesDS.smi', delimiter=' ')
+    smileData.columns = ['smile', 'id']
+    smileData.set_index('id', inplace=True)
 
-gfeDist = allData['labels'].to_numpy()
-print(f'mean,std (gfe): {np.mean(gfeDist)}, {np.std(gfeDist)}')
-tl = 5000 # alter this
-pr = tl / len(smileData)
-gfeDist = np.sort(gfeDist)
-cf = gfeDist[int(0.2 * gfeDist.shape[0])] # gfeDist[int(pr * gfeDist.shape[0])]
-print(f'cf = {cf}')
+    gfeDist = allData['labels'].to_numpy()
+    print(f'mean,std (gfe): {np.mean(gfeDist)}, {np.std(gfeDist)}')
+    tl = 5000 # alter this
+    pr = tl / len(smileData)
+    gfeDist = np.sort(gfeDist)
+    cf = gfeDist[int(0.2 * gfeDist.shape[0])] # gfeDist[int(pr * gfeDist.shape[0])]
+    print(f'cf = {cf}')
 
-yTrain = trainData.loc[:,'labels']<cf
+    yTrain = trainData.loc[:,'labels']<cf
 
-allPD = []
-allLabels = []
-yHit = yTrain[yTrain.values==1]
-yNHit = yTrain[yTrain.values==0]
-hitC = yHit.shape[0]
-nhitC = yNHit.shape[0]
-print(f'hits in dataset: {hitC}, non-hits in dataset: {nhitC}')
+    yHit = yTrain[yTrain.values==1]
+    yNHit = yTrain[yTrain.values==0]
+    hitC = yHit.shape[0]
+    nhitC = yNHit.shape[0]
+    print(f'hits in dataset: {hitC}, non-hits in dataset: {nhitC}')
 
-# oversampleSize = np.min([nhitC, 50000, hitC*oss*8]) # [nhitC, 50000, hitC*oss*8]
-# print(f'sample size for oversampled dataset: {oversampleSize}')
+    # oversampleSize = np.min([nhitC, 50000, hitC*oss*8]) # [nhitC, 50000, hitC*oss*8]
+    # print(f'sample size for oversampled dataset: {oversampleSize}')
 
-# trainTuples = []
-# for i in range(oversampleSize):
-#     iPos = random.randint(0, hitC-1)
-#     iNeg = random.randint(0, nhitC-1)
-#     # 50-50 balanced
-#     trainTuples.append((yHit.index[iPos], 1))
-#     trainTuples.append((yNHit.index[iNeg], 0))
+    # trainTuples = []
+    # for i in range(oversampleSize):
+    #     iPos = random.randint(0, hitC-1)
+    #     iNeg = random.randint(0, nhitC-1)
+    #     # 50-50 balanced
+    #     trainTuples.append((yHit.index[iPos], 1))
+    #     trainTuples.append((yNHit.index[iNeg], 0))
 
-# random.shuffle(trainTuples)
-xValidL = validationData.index.tolist()
-yValid = (validationData.loc[:, 'labels']<cf).astype(int).to_numpy().tolist()
-xTestL = testData.index.tolist()
-yTest = (testData.loc[:, 'labels']<cf).astype(int).to_numpy().tolist()
-yHit = []
-yNHit = []
+    # random.shuffle(trainTuples)
+    xValidL = validationData.index.tolist()
+    yValid = (validationData.loc[:, 'labels']<cf).astype(int).to_numpy().tolist()
+    xTestL = testData.index.tolist()
+    yTest = (testData.loc[:, 'labels']<cf).astype(int).to_numpy().tolist()
+    yHit = []
+    yNHit = []
 
-# trainL = pd.DataFrame(trainTuples)
-# trainL.columns = ['zinc_id', 'labels']
-# trainL.set_index('zinc_id', inplace=True)
-# trainL = pd.merge(trainL, smileData, on='zinc_id')
+    # trainL = pd.DataFrame(trainTuples)
+    # trainL.columns = ['id', 'labels']
+    # trainL.set_index('id', inplace=True)
+    # trainL = pd.merge(trainL, smileData, on='id')
 
-#
-# trainData = pd.concat([trainData, (trainData.loc[trainData['labels']<cf]).sample(frac=0.1)]) # very little oversampling
-trainL = (trainData.loc[:, 'labels']<cf).astype(int).reset_index()
-trainL.columns = ['zinc_id', 'labels']
-trainL.set_index('zinc_id', inplace=True)
-trainL = pd.merge(trainL, smileData, on='zinc_id')
-print(trainL[trainL.labels==0].shape[0], trainL[trainL.labels==1].shape[0])
-#
+    #
+    # trainData = pd.concat([trainData, (trainData.loc[trainData['labels']<cf]).sample(frac=0.1)]) # very little oversampling
+    trainL = (trainData.loc[:, 'labels']<cf).astype(int).reset_index()
+    trainL.columns = ['id', 'labels']
+    trainL.set_index('id', inplace=True)
+    trainL = pd.merge(trainL, smileData, on='id')
+    print(trainL[trainL.labels==0].shape[0], trainL[trainL.labels==1].shape[0])
+    #
 
-validL = (validationData.loc[:, 'labels']<cf).astype(int).reset_index()
-testL = (testData.loc[:, 'labels']<cf).astype(int).reset_index()
-validL.columns = ['zinc_id', 'labels']
-testL.columns = ['zinc_id', 'labels']
-validL.set_index('zinc_id', inplace=True)
-testL.set_index('zinc_id', inplace=True)
-validL = pd.merge(validL, smileData, on='zinc_id')
-testL = pd.merge(testL, smileData, on='zinc_id')
+    validL = (validationData.loc[:, 'labels']<cf).astype(int).reset_index()
+    testL = (testData.loc[:, 'labels']<cf).astype(int).reset_index()
+    validL.columns = ['id', 'labels']
+    testL.columns = ['id', 'labels']
+    validL.set_index('id', inplace=True)
+    testL.set_index('id', inplace=True)
+    validL = pd.merge(validL, smileData, on='id')
+    testL = pd.merge(testL, smileData, on='id')
 
-xTrain = trainL.reset_index()[['zinc_id', 'smile']].values.tolist()
-yTrain = [l[0] for l in trainL.reset_index()[['labels']].values.tolist()]
-xValid = validL.reset_index()[['zinc_id', 'smile']].values.tolist()
-yValid = [l[0] for l in validL.reset_index()[['labels']].values.tolist()]
-xTest = testL.reset_index()[['zinc_id', 'smile']].values.tolist()
-yTest = [l[0] for l in testL.reset_index()[['labels']].values.tolist()]
+    xTrain = trainL.reset_index()[['id', 'smile']].values.tolist()
+    yTrain = [l[0] for l in trainL.reset_index()[['labels']].values.tolist()]
+    xValid = validL.reset_index()[['id', 'smile']].values.tolist()
+    yValid = [l[0] for l in validL.reset_index()[['labels']].values.tolist()]
+    xTest = testL.reset_index()[['id', 'smile']].values.tolist()
+    yTest = [l[0] for l in testL.reset_index()[['labels']].values.tolist()]
+
+    return xTrain, yTrain, xValid, yValid, xTest, yTest, testData, cf
+
+def dude_data():
+    protein_path = '../../dude/' + protein
+
+    activef = open(f'{protein_path}/actives_final.ism', 'r')
+    decoyf = open(f'{protein_path}/decoys_final.ism', 'r')
+
+    actives_d = {
+        line[1] : line[0]
+        for line in [l.strip().split(" ") for l in activef.readlines()]
+    }
+    decoys_d = {
+        line[1] : line[0]
+        for line in [l.strip().split(" ") for l in decoyf.readlines()]
+    }
+
+    activef.close()
+    decoyf.close()
+
+    # testing
+    # smileData = pd.read_csv('../../data/smilesDS.smi', delimiter=' ')
+    # smileData.columns = ['smile', 'id']
+    # smiledict = {
+    #     x[1] : x[0] 
+    #     for x in smileData.values.tolist()
+    # }
+    #
+    
+    actives = []
+    decoys = []
+    with open(f'{protein_path}/combine.scores', 'r') as f:
+        score_lines = [x.strip().split('\t') for x in f.readlines()]
+        for score in score_lines:
+            ligand_id = score[0]
+            if len(score) < 7: continue
+            if ligand_id[0] != 'C':
+                actives.append([ligand_id, actives_d[ligand_id], float(score[6])])
+            else:
+                decoys.append([ligand_id, decoys_d[ligand_id], float(score[6])])
+
+    # random_decoys = [[x[1], x[0], 0] for x in smileData.values.tolist()]
+    # x: zinc, smile; y: 0-1  
+    # testdata (df) : id, labels (gfe)
+    # data (lists) : [id, smile], 0-1      
+    allData = pd.DataFrame([[x[0], x[2]] for x in decoys + actives])
+    # allData = pd.DataFrame([[x[0], x[2]] for x in random_decoys + actives])
+    allData.columns = ['id', 'labels']
+    trainData, validationData, testData = np.split(allData.sample(frac=1), 
+                                            [int(.70*len(allData)), int(.85*len(allData))])
+    xTrain, yTrain, xValid, yValid, xTest, yTest = [], [], [], [], [], []
+    iter_datasets = [[xTrain, yTrain, trainData], [xValid, yValid, validationData], [xTest, yTest, testData]]
+    for iter_dataset in iter_datasets:
+        for _, row in iter_dataset[2].iterrows():
+            ligand = row['id']
+            if ligand in actives_d:
+                assert ligand[0] != 'C'
+                iter_dataset[0].append([ligand, actives_d[ligand]])
+                iter_dataset[1].append(1)
+            else:
+                assert ligand[0] == 'C'
+                iter_dataset[0].append([ligand, decoys_d[ligand]])
+                # iter_dataset[0].append([ligand, smiledict[ligand]])
+                iter_dataset[1].append(0)
+
+    actives_c = sum(yTest) + sum(yTrain) + sum(yValid) 
+    print(f'actives: {actives_c}, inactives: {(len(xValid) + len(xTrain) + len(xTest)) - actives_c}')
+    testData.set_index('id', inplace=True)
+    return xTrain, yTrain, xValid, yValid, xTest, yTest, testData, actives_d
+
+xTrain, yTrain, xValid, yValid, xTest, yTest, testData, actives = None, None, None, None, None, None, None, None
+cf = 0
+
+if dude:
+    xTrain, yTrain, xValid, yValid, xTest, yTest, testData, actives = dude_data()
+else:
+    xTrain, yTrain, xValid, yValid, xTest, yTest, testData, cf = protein_data()
 
 class_weights = compute_class_weight('balanced', classes=np.unique(yTrain), y=yTrain)
 print(f'class weights: {class_weights}')
 
-hiddenfeats = [32] * 4 # 32
+hiddenfeats = [64] * 4 # 32
 layers = [num_atom_features()] + hiddenfeats 
 fpl = fplCmd 
 modelParams = {
@@ -244,7 +323,7 @@ for epoch in range(1, epochs + 1):
 
     for batch, (a, b, e, (y, zidTr)) in enumerate(traindl):
         at, bo, ed, Y = a.to(device), b.to(device), e.to(device), y.to(device)
-
+ 
         preds = model((at, bo, ed))
         loss = lossFn(preds, Y)
 
@@ -364,7 +443,7 @@ try:
             for i, P in enumerate(pred.tolist()):
                 if P >= tr: 
                     pos.append(zidTe[i])
-                    gfe_delta.append(testData.loc[testData['zinc_id'] == zidTe[i]].values[0][1])
+                    gfe_delta.append(testData.loc[testData['id'] == zidTe[i]].values[0][1])
                 else: neg.append(zidTe[i])
                 bin_o[zidTe[i]] = P
     precTest, recTest, thresholdsTest = precision_recall_curve(np.array(yTst), np.array(predTst))
@@ -381,9 +460,13 @@ try:
     avgGfe = np.mean(gfe_delta)
 
     with open(f'../res/model{mn}/testset.txt', 'w+') as f:
-        f.write('zinc_id,gfe\n')
+        f.write('id,gfe,label\n')
         for i, r in testData.reset_index().iterrows():
-            f.write(f'{r["zinc_id"]},{r["labels"]}\n')
+            f.write(f'{r["id"]},{r["labels"]},')
+            if dude: 
+                f.write(f'{str(int(r["id"] in actives))}\n')
+            else: 
+                f.write(f'{str(int(float(r["labels"]) < cf))}\n')
 
     with open(f'../res/model{mn}/trData.txt', 'w+') as f:
         f.write("tr,prec,rec,f1,fb(b=1.75)\n")
@@ -396,7 +479,7 @@ try:
                 f.write(f'{triter},{p},{r},{fm}\n')
             except:
                 continue
-     
+
     with open(f'../res/model{mn}/miscData.txt', 'w+') as f: 
         f.write('AUC data (thresholds, fpr, tpr)\n') 
         f.write(f"{','.join([str(x) for x in threshTest.tolist()])}\n")
@@ -411,7 +494,7 @@ try:
         f.write(f"{','.join([str(x) for x in gfe_delta])}")
      
     enrichDist = testData.loc[testData['labels'] < cf]
-    enrichment = enrichDist.loc[enrichDist['zinc_id'].isin(pos)]
+    enrichment = enrichDist.loc[enrichDist['id'].isin(pos)]
     cfLow = testData['labels'].min()
     probs = []
     for i in range(int(cfLow * 100), int((cf + 0.01) * 100)):
@@ -434,12 +517,14 @@ try:
     ranked_mols = sorted(bin_o.items(), key=lambda item: item[1], reverse=True)
     tnenrich = []
     for n in [1, 5, 10, 50, 100]:
-        tpn = len([m for m in ranked_mols[:n] if m[0] in pos and m[0] in enrichDist.zinc_id.values])
+        tpn = len([m for m in ranked_mols[:n] if m[0] in pos and m[0] in enrichDist.id.values])
         c = 0
-        for i in range(100):
+        num_iter = 0
+        while c == 0 or num_iter != 100: 
             subsetm = random.sample(ranked_mols, n)
-            c += len([m for m in subsetm if m[0] in pos and m[0] in enrichDist.zinc_id.values])
-        tnenrich.append(tpn/(c/100))
+            c += len([m for m in subsetm if m[0] in pos and m[0] in enrichDist.id.values])
+            num_iter += 1
+        tnenrich.append(tpn/(c/num_iter))
     
     plt.plot([x[0] for x in probs], [x[2]/x[1] for x in probs], 'b--', label='pdf of enrichment')
     plt.ylim([0, 1.2])
@@ -471,5 +556,6 @@ try:
  
     with open('../hpResults.csv','a') as f:
         f.write(f'{mn},{oss},{bs},{lr},{df},{cf},{fplCmd},{aucValid},{aucPRValid},{precisionValid},{recallValid},{f1Valid},{hitsValid},{tr},{aucTest},{aucPRTest},{precisionTest},{recallTest},{f1Test},{hitsTest},{avgGfe},{tnenrich[0]},{tnenrich[1]},{tnenrich[2]},{tnenrich[3]},{tnenrich[4]}\n')
-except:
-    pass
+except Exception as e:
+    print(e)
+    traceback.print_exc()
