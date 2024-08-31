@@ -12,6 +12,7 @@ parser.add_argument('-tm', '--time', required=False)
 parser.add_argument('-p', '--protein', required=True)
 parser.add_argument('-fpl', '--fplength', required=True)
 parser.add_argument('-l', '--left', required=False)
+parser.add_argument('-d', '--dataset', required=False)
 
 ioargs = parser.parse_args()
 # time = ioargs.time if ioargs.time is not None else str(3840)
@@ -20,6 +21,12 @@ protein = ioargs.protein
 fplength = ioargs.fplength
 lt = ioargs.left
 proteinn = protein
+dataset = ioargs.dataset
+
+datasetname = None
+if dataset == None: datasetname = 'normal'
+else: datasetname = str(dataset)
+print(datasetname)
 
 # dropout = [0.3, 0.5, 0.7] # 0.3, 0.5, 0.7
 # learn_rate = [0.001, 0.0001, 0.003, 0.0003] # 0.001, 0.0001, 0.003, 0.0003
@@ -28,8 +35,8 @@ proteinn = protein
 # bs = [64, 128, 256] # was [32, 64] as of acease7
 
 dropout = [0]
-learn_rate = [0.001, 0]
-weight_decay = [0]
+learn_rate = [0.001, 0.0003, 0.0001]
+weight_decay = [0, 0.001, 0.0001]
 oss = [25]
 bs = [256, 128]
 # dropout = [0]
@@ -95,7 +102,7 @@ for i in range(len(hps)):
         f.write('source ../../tensorflow_gpu/bin/activate\n')
  
         o,batch,do,lr,wd = hps[i]
-        f.write('python '+'../../train.py'+' '+'-dropout'+' '+str(do)+' '+'-learn_rate'+' '+str(lr)+' '+'-os'+' '+str(o)+' '+'-bs'+' '+str(batch)+' '+'-protein '+protein+' '+'-fplen '+fplength+' '+'-wd '+str(wd)+' '+'-mnum '+str(i+1)+'\n')
+        f.write('python '+'../../train.py'+' '+'-dropout'+' '+str(do)+' '+'-learn_rate'+' '+str(lr)+' '+'-os'+' '+str(o)+' '+'-bs'+' '+str(batch)+' '+'-protein '+protein+' '+'-fplen '+fplength+' '+'-wd '+str(wd)+' '+'-mnum '+str(i+1)+' '+'-dataset '+datasetname+'\n')
 
 
 # need to update when updating model params

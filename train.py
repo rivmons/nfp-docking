@@ -32,6 +32,7 @@ parser.add_argument('-bs', '--batch_size', required=True)
 parser.add_argument('-fplen', '--fplength', required=True)
 parser.add_argument('-mnum', '--model_number', required=True)
 parser.add_argument('-wd', '--weight_decay', required=True)
+parser.add_argument('-dataset', '--d', required=True)
 
 cmdlArgs = parser.parse_args()
 df=float(cmdlArgs.df)
@@ -42,8 +43,14 @@ bs=int(cmdlArgs.batch_size)
 protein = cmdlArgs.pro
 fplCmd = int(cmdlArgs.fplength)
 mn = cmdlArgs.model_number
-dude = True 
+dataset = cmdlArgs.d
 
+dataseti = 0
+if dataset == "dude": dataseti = 1
+elif dataset == "lit-pcba": dataseti = 2
+    
+
+print(f'dataset: {dataset}')
 print('hyperparameters: ', end='')
 print(df,lr,wd, sep=', ')
 print(f'interop threads: {torch.get_num_interop_threads()}, intraop threads: {torch.get_num_threads()}')
@@ -248,11 +255,44 @@ def dude_data():
     testData.set_index('id', inplace=True)
     return xTrain, yTrain, xValid, yValid, xTest, yTest, testData, actives_d
 
+def litpcba_data():
+    activel = [x.strip().split() for x in open(f'../../lit-pcba/{protein.upper()}/actives.smi', 'r').readlines()]
+    inactivel = [x.strip().split() for x in open(f'../../lit-pcba/{protein.upper()}/inactives.smi', 'r').readlines()]
+
+    actives = [[x[1], x[0], 1] for x in activel]
+    inactives = [[x[1], x[0], 0] for x in inactivel][:20000]
+
+    actives_d = {
+        x[1]: x[0]
+        for x in activel
+    }
+ 
+    allData = pd.DataFrame([[x[0], x[1], x[2]] for x in actives + inactives])
+    allData.columns = ['id', 'smile', 'labels']
+    trainData, validationData, testData = np.split(allData.sample(frac=1), 
+                                            [int(.70*len(allData)), int(.85*len(allData))])
+    xTrain, yTrain, xValid, yValid, xTest, yTest = [], [], [], [], [], []
+    iter_datasets = [[xTrain, yTrain, trainData], [xValid, yValid, validationData], [xTest, yTest, testData]]
+    for iter_dataset in iter_datasets:
+            for _, row in iter_dataset[2].iterrows():
+                ligand = row['id']
+                iter_dataset[0].append([ligand, row['smile']])
+                iter_dataset[1].append(row['labels'])
+    
+    actives_c = sum(yTest) + sum(yTrain) + sum(yValid) 
+    print(f'actives: {actives_c}, inactives: {(len(xValid) + len(xTrain) + len(xTest)) - actives_c}')
+    del testData['smile']
+    testData.set_index('id', inplace=True)
+    return xTrain, yTrain, xValid, yValid, xTest, yTest, testData, actives_d 
+
+
 xTrain, yTrain, xValid, yValid, xTest, yTest, testData, actives = None, None, None, None, None, None, None, None
 cf = 0
 
-if dude:
+if dataseti == 1:
     xTrain, yTrain, xValid, yValid, xTest, yTest, testData, actives = dude_data()
+elif dataseti == 2:
+    xTrain, yTrain, xValid, yValid, xTest, yTest, testData, actives = litpcba_data()
 else:
     xTrain, yTrain, xValid, yValid, xTest, yTest, testData, cf = protein_data()
 
@@ -463,7 +503,7 @@ try:
         f.write('id,gfe,label\n')
         for i, r in testData.reset_index().iterrows():
             f.write(f'{r["id"]},{r["labels"]},')
-            if dude: 
+            if dataseti != 0: 
                 f.write(f'{str(int(r["id"] in actives))}\n')
             else: 
                 f.write(f'{str(int(float(r["labels"]) < cf))}\n')
@@ -524,6 +564,10 @@ try:
             subsetm = random.sample(ranked_mols, n)
             c += len([m for m in subsetm if m[0] in pos and m[0] in enrichDist.id.values])
             num_iter += 1
+            if c == 1000:
+                c = num_iter
+                tpn = -1
+                break
         tnenrich.append(tpn/(c/num_iter))
     
     plt.plot([x[0] for x in probs], [x[2]/x[1] for x in probs], 'b--', label='pdf of enrichment')

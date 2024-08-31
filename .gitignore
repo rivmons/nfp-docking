@@ -11,3 +11,4 @@ substructure_activations/
 trainlocal.sh
 Makefile
 molgraph.py
+lit-pcba
