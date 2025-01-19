@@ -10,7 +10,7 @@ def padDim(arr, size, dim, val=0, padR=True):
     padded[dim] = (0, size - arr.shape[dim]) if padR else (size - arr.shape[dim], 0)
     return np.pad(arr, pad_width=padded, mode='constant', constant_values=val)
 
-def buildFeats(smiles, maxDeg=5, maxAtom=70, ds='unknown'):
+def buildFeats(smiles, maxDeg=5, maxAtom=200, ds='unknown'):
     n = len(smiles)
     nAF = num_atom_features()
     nBF = num_bond_features()
@@ -27,9 +27,9 @@ def buildFeats(smiles, maxDeg=5, maxAtom=70, ds='unknown'):
         connMat = [[] for i in range(len(molAtoms))]
 
         if len(molAtoms) > atoms.shape[1]:
-            atoms = padDim(atoms, len(molAtoms), axis=1)
-            bonds = padDim(bonds, len(molAtoms), axis=1)
-            edges = padDim(edges, len(molAtoms), axis=1, val=-1)
+            atoms = padDim(atoms, len(molAtoms), 1)
+            bonds = padDim(bonds, len(molAtoms), 1)
+            edges = padDim(edges, len(molAtoms), 1, val=-1)
         
         for atomIdx, atom in enumerate(molAtoms):
             atoms[molIdx, atomIdx, : nAF] = getAtomFeatures(atom)

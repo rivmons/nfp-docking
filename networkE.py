@@ -128,6 +128,7 @@ class nfpOutput(nn.Module):
         # self.bound = 1/np.sqrt(layer)
         torch.nn.init.xavier_normal_(self.w)
         torch.nn.init.constant_(self.b, 0.01)
+
         self.to(device)
 
     def forward(self, a, b, e):
@@ -256,7 +257,7 @@ class dockingProtocol(nn.Module):
         return torch.squeeze(self.model(input))
 
 class dockingDataset(Dataset):
-    def __init__(self, train, labels, maxa=70, maxd=6, name='unknown'):
+    def __init__(self, train, labels, maxa=200, maxd=6, name='unknown'):
         # self.train = (zid, smile), self.label = (bin label)
         self.train = train
         self.labels = torch.from_numpy(np.array(labels)).float()

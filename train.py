@@ -88,16 +88,13 @@ def labelsToDF(fname):
     arr = []
     with open(fname) as f:
         for line in f.readlines():
+            line = [x.strip() for x in line.split()]
             try:
-                l = None
-                try:
-                    l = [float(line.split('\t')[0].split(' ')[2])]
-                except:
-                    l = [float(line.split('\t')[1])]
-                if l[0] >= 10: continue
-                zid = line.split('\t')[2].rstrip() if "ZINC" not in line.split('\t')[1].rstrip() else line.split('\t')[1].rstrip()
-                l.append(zid)
-                arr.append(l)
+                zid = line[2] if "ZINC" in line[2] else (line[1] if "ZINC" in line[1] else line[0])
+                l = line[2] if "." in line[2] else (line[1] if "." in line[1] else line[0])
+                if float(l) > 10: 
+                    continue
+                arr.append([float(l), str(zid)])
             except:
                 continue
     df = pd.DataFrame(arr)
@@ -107,6 +104,7 @@ def labelsToDF(fname):
 def protein_data():
     # 70-15-15 split
     allData = labelsToDF(f'../../data/dock_{protein}.txt')
+    print(allData.to_numpy().tolist()[0:2])
     allData.set_index('id', inplace=True)
     trainData, validationData, testData = np.split(allData.sample(frac=1), 
                                             [int(.70*len(allData)), int(.85*len(allData))])
@@ -121,6 +119,7 @@ def protein_data():
     smileData.set_index('id', inplace=True)
 
     gfeDist = allData['labels'].to_numpy()
+    print(np.mean(gfeDist))
     print(f'mean,std (gfe): {np.mean(gfeDist)}, {np.std(gfeDist)}')
     tl = 5000 # alter this
     pr = tl / len(smileData)
@@ -178,12 +177,12 @@ def protein_data():
     validL = pd.merge(validL, smileData, on='id')
     testL = pd.merge(testL, smileData, on='id')
 
-    xTrain = trainL.reset_index()[['id', 'smile']].values.tolist()
-    yTrain = [l[0] for l in trainL.reset_index()[['labels']].values.tolist()]
-    xValid = validL.reset_index()[['id', 'smile']].values.tolist()
-    yValid = [l[0] for l in validL.reset_index()[['labels']].values.tolist()]
-    xTest = testL.reset_index()[['id', 'smile']].values.tolist()
-    yTest = [l[0] for l in testL.reset_index()[['labels']].values.tolist()]
+    xTrain = trainL.reset_index()[['id', 'smile']].values.tolist()[:100]
+    yTrain = [l[0] for l in trainL.reset_index()[['labels']].values.tolist()][:100]
+    xValid = validL.reset_index()[['id', 'smile']].values.tolist()[:100]
+    yValid = [l[0] for l in validL.reset_index()[['labels']].values.tolist()][:100]
+    xTest = testL.reset_index()[['id', 'smile']].values.tolist()[:100]
+    yTest = [l[0] for l in testL.reset_index()[['labels']].values.tolist()][:100]
 
     return xTrain, yTrain, xValid, yValid, xTest, yTest, testData, cf
 
@@ -206,12 +205,12 @@ def dude_data():
     decoyf.close()
 
     # testing
-    # smileData = pd.read_csv('../../data/smilesDS.smi', delimiter=' ')
-    # smileData.columns = ['smile', 'id']
-    # smiledict = {
-    #     x[1] : x[0] 
-    #     for x in smileData.values.tolist()
-    # }
+    smileData = pd.read_csv('../../data/smilesDS.smi', delimiter=' ')
+    smileData.columns = ['smile', 'id']
+    smiledict = {
+        x[1] : x[0] 
+        for x in smileData.values.tolist()
+    }
     #
     
     actives = []
@@ -226,12 +225,12 @@ def dude_data():
             else:
                 decoys.append([ligand_id, decoys_d[ligand_id], float(score[6])])
 
-    # random_decoys = [[x[1], x[0], 0] for x in smileData.values.tolist()]
+    random_decoys = [[x[1], x[0], 0] for x in smileData.values.tolist()]
     # x: zinc, smile; y: 0-1  
     # testdata (df) : id, labels (gfe)
     # data (lists) : [id, smile], 0-1      
-    allData = pd.DataFrame([[x[0], x[2]] for x in decoys + actives])
-    # allData = pd.DataFrame([[x[0], x[2]] for x in random_decoys + actives])
+    # allData = pd.DataFrame([[x[0], x[2]] for x in decoys + actives])
+    allData = pd.DataFrame([[x[0], x[2]] for x in random_decoys + actives])
     allData.columns = ['id', 'labels']
     trainData, validationData, testData = np.split(allData.sample(frac=1), 
                                             [int(.70*len(allData)), int(.85*len(allData))])
@@ -245,9 +244,9 @@ def dude_data():
                 iter_dataset[0].append([ligand, actives_d[ligand]])
                 iter_dataset[1].append(1)
             else:
-                assert ligand[0] == 'C'
-                iter_dataset[0].append([ligand, decoys_d[ligand]])
-                # iter_dataset[0].append([ligand, smiledict[ligand]])
+                # assert ligand[0] == 'C'
+                # iter_dataset[0].append([ligand, decoys_d[ligand]])
+                iter_dataset[0].append([ligand, smiledict[ligand]])
                 iter_dataset[1].append(0)
 
     actives_c = sum(yTest) + sum(yTrain) + sum(yValid) 
@@ -260,7 +259,7 @@ def litpcba_data():
     inactivel = [x.strip().split() for x in open(f'../../lit-pcba/{protein.upper()}/inactives.smi', 'r').readlines()]
 
     actives = [[x[1], x[0], 1] for x in activel]
-    inactives = [[x[1], x[0], 0] for x in inactivel][:20000]
+    inactives = [[x[1], x[0], 0] for x in inactivel]
 
     actives_d = {
         x[1]: x[0]
@@ -349,7 +348,7 @@ lendl = len(trainds)
 bestVLoss = 100000000
 bestmodel = None
 lastEpoch = False
-epochs = 200
+epochs = 2
 cepoch = 0
 earlyStop = EarlyStopper(patience=15, min_delta=0.0001)
 trainLoss, validLoss = [], []
@@ -564,7 +563,7 @@ try:
             subsetm = random.sample(ranked_mols, n)
             c += len([m for m in subsetm if m[0] in pos and m[0] in enrichDist.id.values])
             num_iter += 1
-            if c == 1000:
+            if num_iter == 1000:
                 c = num_iter
                 tpn = -1
                 break
